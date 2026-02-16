@@ -1,0 +1,70 @@
+# ────────────────────────────────────────────────────────────────
+# Common ignores - both frontend & backend
+# ────────────────────────────────────────────────────────────────
+
+# Node.js / npm / pnpm / yarn
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnpm-lock.yaml
+yarn.lock
+package-lock.json
+
+# Build artifacts
+dist/
+build/
+out/
+.next/
+coverage/
+*.log
+*.tsbuildinfo
+
+# Environment / secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Editor & OS files
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln.docstates
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Prisma
+prisma/dev.db
+prisma/dev.db-journal
+prisma/migrations/
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# ────────────────────────────────────────────────────────────────
+# Backend-specific (tema-collections-demo)
+# ────────────────────────────────────────────────────────────────
+
+tema-collections-demo/dist/
+tema-collections-demo/coverage/
+
+# ────────────────────────────────────────────────────────────────
+# Frontend-specific (tema-frontend)
+# ────────────────────────────────────────────────────────────────
+
+tema-frontend/.vite/
+tema-frontend/dist/
+tema-frontend/coverage/
+tema-frontend/playwright-report/
+tema-frontend/test-results/
+
+# Optional: ignore large downloaded images or temp files if you have any
+tema-frontend/public/uploads/
+tema-frontend/src/assets/temp/

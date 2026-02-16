@@ -1,0 +1,25 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model CollectionItem {
+  id               String   @id @default(uuid())
+  museumId         String   @default("met")
+  externalId       String   @unique
+  title            String
+  artist           String?
+  year             Int?
+  description      String?
+  imageUrl         String?
+  additionalImages String?  
+  metadata         String?  
+  aiKeywords       String?  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("collection_items")
+}
