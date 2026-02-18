@@ -1,10 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getItems, importMet, enrichItem } from "@/api/api";
 
-export function useItems() {
+export function useItems(page: number = 1, limit: number = 100) {
   return useQuery({
-    queryKey: ["items"],
-    queryFn: () => getItems().then((res) => res.data),
+    queryKey: ["items", page, limit],
+    queryFn: () => getItems(page, limit).then((res) => res.data),
   });
 }
 

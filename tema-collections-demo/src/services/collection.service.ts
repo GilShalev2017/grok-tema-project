@@ -1,177 +1,3 @@
-// import { PrismaClient } from "@prisma/client";
-// import axios from "axios";
-// import OpenAI from "openai";
-
-// import prisma from "../lib/prisma"; // adjus
-// const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// export class CollectionService {
-//   async importFromMet(departmentIds: string[] = []) {
-//     const params: any = {
-//       hasImages: true,
-//       q: "*", // broad search; change to a keyword like "painting" for testing if needed
-//     };
-
-//     if (departmentIds.length) {
-//       params.departmentId = departmentIds.join("|");
-//     }
-
-//     try {
-//       const searchRes = await axios.get(
-//         "https://collectionapi.metmuseum.org/public/collection/v1/search",
-//         { params, timeout: 15000 },
-//       );
-
-//       const objectIDs = searchRes.data.objectIDs ?? [];
-//       console.log(`Met API returned ${objectIDs.length} potential object IDs`);
-
-//       if (objectIDs.length === 0) {
-//         return { imported: 0, message: "No items found" };
-//       }
-
-//       const items = [];
-//       const limitedIds = objectIDs.slice(0, 50); // increase if you want more, but keep reasonable for dev
-
-//       for (const id of limitedIds) {
-//         try {
-//           const objRes = await axios.get(
-//             `https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`,
-//             { timeout: 10000 },
-//           );
-//           const data = objRes.data;
-
-//           // Strict filter: only include if there's a usable primary image
-//           const primaryImg = data.primaryImage || data.primaryImageSmall;
-//           if (!primaryImg) {
-//             continue; // skip items without image
-//           }
-
-//           items.push({
-//             externalId: String(data.objectID),
-//             title: data.title || "Untitled",
-//             artist: data.artistDisplayName || null,
-//             year: data.objectDate ? parseInt(data.objectDate, 10) : null,
-//             description: data.medium || data.culture || null,
-//             imageUrl: primaryImg, // prefer primaryImage (higher res)
-//             additionalImages: data.additionalImages?.join(",") || null,
-//             metadata: data ? JSON.stringify(data) : null,
-//             aiKeywords: null,
-//             museumId: "met",
-//           });
-//         } catch (objErr: any) {
-//           console.warn(`Failed to fetch object ${id}: ${objErr.message}`);
-//         }
-//       }
-
-//       if (items.length > 0) {
-//         await prisma.collectionItem.createMany({ data: items });
-//         console.log(`Successfully imported ${items.length} items WITH images`);
-//       }
-
-//       return {
-//         imported: items.length,
-//         totalProcessed: limitedIds.length,
-//         totalAvailable: objectIDs.length,
-//       };
-//     } catch (err: any) {
-//       console.error("Met import error:", err.message);
-//       throw err;
-//     }
-//   }
-
-//   async enrichWithAI(itemId: string) {
-//     const item = await prisma.collectionItem.findUnique({
-//       where: { id: itemId },
-//     });
-//     if (!item || !item.imageUrl) return item;
-
-//     let keywords: string[] = [];
-
-//     try {
-//       const response = await openai.chat.completions.create({
-//         model: "gpt-4o",
-//         messages: [
-//           {
-//             role: "user",
-//             content: [
-//               {
-//                 type: "text",
-//                 text: `You are an art historian analyzing this artwork titled "${item.title || "Untitled"}" by ${item.artist || "unknown artist"}.
-//               Describe the main visual elements, colors, style, composition, mood, and subjects in detail.
-//               Return **exactly 8-12 unique, specific keywords** as a JSON array of strings (no duplicates, no explanations).
-//               Focus on distinctive features to differentiate from similar works.`,
-//               },
-//               {
-//                 type: "image_url",
-//                 image_url: { url: item.imageUrl },
-//               },
-//             ],
-//           },
-//         ],
-//         max_tokens: 200,
-//         temperature: 0.4, // lower = more consistent & factual
-//       });
-
-//       const content = response.choices[0]?.message?.content ?? "[]";
-//       keywords = JSON.parse(content);
-//       if (!Array.isArray(keywords)) keywords = [];
-//       keywords = [...new Set(keywords)]; // force uniqueness
-//     } catch (err: any) {
-//       console.error("AI enrichment failed:", err.message);
-//       keywords = ["art", "painting", "historical", "portrait", "culture"];
-//     }
-
-//     const keywordsStr = keywords.join(",");
-//     return prisma.collectionItem.update({
-//       where: { id: itemId },
-//       data: { aiKeywords: keywordsStr },
-//     });
-//   }
-
-//   async getAllItems() {
-//     console.log("Fetching all items");
-//     const items = await prisma.collectionItem.findMany({
-//       take: 50,
-//       orderBy: { createdAt: "desc" },
-//     });
-
-//     // Optional: parse back to arrays/objects when returning
-//     return items.map((item: any) => ({
-//       ...item,
-//       additionalImages: item.additionalImages
-//         ? item.additionalImages.split(",")
-//         : [],
-//       metadata: item.metadata ? JSON.parse(item.metadata) : null,
-//       aiKeywords: item.aiKeywords ? item.aiKeywords.split(",") : [],
-//     }));
-//   }
-
-//   // CSV import remains mock for now — same logic
-//   async importFromCSV(filePath: string) {
-//     const mockItems = [
-//       {
-//         externalId: "csv-001",
-//         title: "Portrait of a Lady",
-//         artist: "Unknown",
-//         year: 1780,
-//         description: "Example item imported via CSV",
-//         imageUrl: "/uploads/example.jpg",
-//         additionalImages: null,
-//         metadata: null,
-//         aiKeywords: null,
-//         museumId: "demo",
-//       },
-//     ];
-
-//     await prisma.collectionItem.createMany({
-//       data: mockItems,
-//       //skipDuplicates: true,
-//     });
-
-//     return { imported: mockItems.length };
-//   }
-// }
-// src/services/collection.service.ts
 import { PrismaClient } from "@prisma/client";
 import axios from "axios";
 import OpenAI from "openai";
@@ -187,39 +13,493 @@ const aiCache = new NodeCache({ stdTTL: 86400, checkperiod: 600 }); // 24 hours 
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+console.log("[SERVICE] File loaded successfully");
+
 export class CollectionService {
   // ==================== MET IMPORT (with image filter + cache) ====================
-  async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
-    const params: any = {
-      hasImages: true,
-      q: searchTerm.trim() || "*",
-    };
+  // async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
+  //   const params: any = {
+  //     hasImages: true,
+  //     q: searchTerm.trim() || "*",
+  //   };
 
-    // Add departments only if provided
-    if (departmentIds.length > 0) {
-      params.departmentId = departmentIds.join("|");
-    }
+  //   // Add departments only if provided
+  //   if (departmentIds.length > 0) {
+  //     params.departmentId = departmentIds.join("|");
+  //   }
+
+  //   try {
+  //     const searchRes = await axios.get(
+  //       "https://collectionapi.metmuseum.org/public/collection/v1/search",
+  //       { params, timeout: 15000 },
+  //     );
+
+  //     const objectIDs = searchRes.data.objectIDs ?? [];
+  //     console.log(
+  //       `[IMPORT] Met returned ${objectIDs.length} items for q="${params.q}"` +
+  //         (departmentIds.length ? `, departments=${params.departmentId}` : ""),
+  //     );
+
+  //     if (objectIDs.length === 0) {
+  //       return { imported: 0, message: "No items found for this search" };
+  //     }
+
+  //     const items: any[] = [];
+  //     const limitedIds = objectIDs.slice(0, 80); // adjustable limit
+
+  //     let dbgItemsWithoutImageCounter = 0;
+
+  //     for (const id of limitedIds) {
+  //       const cacheKey = `met-object-${id}`;
+  //       let data = metCache.get<any>(cacheKey);
+
+  //       if (!data) {
+  //         try {
+  //           const objRes = await axios.get(
+  //             `https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`,
+  //             { timeout: 10000 },
+  //           );
+  //           data = objRes.data;
+  //           metCache.set(cacheKey, data);
+  //         } catch (err) {
+  //           console.warn(`[IMPORT] Failed to fetch object ${id}`);
+  //           continue;
+  //         }
+  //       }
+
+  //       // Strict image filter
+  //       const primaryImg = data.primaryImage || data.primaryImageSmall;
+
+  //       if (!primaryImg) {
+  //         dbgItemsWithoutImageCounter++;
+  //         continue;
+  //       }
+
+  //       items.push({
+  //         externalId: String(data.objectID),
+  //         title: data.title || "Untitled",
+  //         artist: data.artistDisplayName || null,
+  //         year: data.objectDate ? parseInt(data.objectDate, 10) : null,
+  //         description: data.medium || data.culture || null,
+  //         imageUrl: primaryImg,
+  //         additionalImages: data.additionalImages?.join(",") || null,
+  //         metadata: data ? JSON.stringify(data) : null,
+  //         aiKeywords: null,
+  //         museumId: "met",
+  //       });
+  //     }
+
+  //     console.log(`found ${dbgItemsWithoutImageCounter} items without image!`);
+
+  //     let importedCount = 0;
+  //     let updatedCount = 0;
+
+  //     if (items.length > 0) {
+  //       // Process items individually with upsert to handle duplicates
+  //       for (const item of items) {
+  //         try {
+  //           const result = await prisma.collectionItem.upsert({
+  //             where: {
+  //               externalId: item.externalId,
+  //             },
+  //             update: {
+  //               title: item.title,
+  //               artist: item.artist,
+  //               year: item.year,
+  //               description: item.description,
+  //               imageUrl: item.imageUrl,
+  //               additionalImages: item.additionalImages,
+  //               metadata: item.metadata,
+  //               updatedAt: new Date(),
+  //             },
+  //             create: item,
+  //           });
+
+  //           if (
+  //             result.createdAt.toISOString() === result.updatedAt.toISOString()
+  //           ) {
+  //             importedCount++;
+  //           } else {
+  //             updatedCount++;
+  //           }
+  //         } catch (err) {
+  //           console.warn(
+  //             `[IMPORT] Failed to upsert item ${item.externalId}:`,
+  //             err,
+  //           );
+  //         }
+  //       }
+
+  //       console.log(
+  //         `[IMPORT] Saved ${importedCount} new items, updated ${updatedCount} existing items`,
+  //       );
+  //     }
+
+  //     return {
+  //       imported: importedCount,
+  //       updated: updatedCount,
+  //       totalProcessed: limitedIds.length,
+  //       totalFound: objectIDs.length,
+  //       searchTerm: params.q,
+  //       departments: departmentIds.length ? departmentIds : null,
+  //     };
+  //   } catch (err: any) {
+  //     console.error("[IMPORT] Critical error:", err.message);
+  //     throw err;
+  //   }
+  // }
+
+  //Gemini 1
+  // async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
+  //   const normalizedSearchTerm = searchTerm.trim() || "*";
+
+  //   try {
+  //     // 1. FETCH SEARCH IDs (Handle multiple departments)
+  //     // The Met API /search endpoint only supports ONE departmentId per call.
+  //     // We run searches in parallel for each department provided.
+  //     const searchTasks =
+  //       departmentIds.length > 0
+  //         ? departmentIds.map((id) =>
+  //             axios.get(
+  //               "https://collectionapi.metmuseum.org/public/collection/v1/search",
+  //               {
+  //                 params: {
+  //                   q: normalizedSearchTerm,
+  //                   hasImages: true,
+  //                   departmentId: id,
+  //                 },
+  //                 timeout: 15000,
+  //               },
+  //             ),
+  //           )
+  //         : [
+  //             axios.get(
+  //               "https://collectionapi.metmuseum.org/public/collection/v1/search",
+  //               {
+  //                 params: { q: normalizedSearchTerm, hasImages: true },
+  //                 timeout: 15000,
+  //               },
+  //             ),
+  //           ];
+
+  //     const searchResponses = await Promise.all(searchTasks);
+
+  //     // Merge all objectIDs and remove duplicates using a Set
+  //     const allObjectIDs = searchResponses.flatMap(
+  //       (res) => res.data.objectIDs ?? [],
+  //     );
+  //     const uniqueObjectIDs = [...new Set(allObjectIDs)];
+
+  //     const limitedIds = uniqueObjectIDs.slice(0, 80); // API limit is ~80 requests per second
+
+  //     console.log(
+  //       `[IMPORT] Met found ${uniqueObjectIDs.length} unique items. Processing first ${limitedIds.length}...`,
+  //     );
+
+  //     if (limitedIds.length === 0) {
+  //       return { imported: 0, message: "No items found for this search" };
+  //     }
+
+  //     // 2. FETCH OBJECT DETAILS IN PARALLEL
+  //     // This is significantly faster than a sequential for-loop.
+  //     const fetchPromises = limitedIds.map(async (id) => {
+  //       const cacheKey = `met-object-${id}`;
+  //       let data = metCache.get<any>(cacheKey);
+
+  //       if (!data) {
+  //         try {
+  //           const objRes = await axios.get(
+  //             `https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`,
+  //             { timeout: 10000 },
+  //           );
+  //           data = objRes.data;
+  //           metCache.set(cacheKey, data);
+  //         } catch (err) {
+  //           console.warn(`[IMPORT] Failed to fetch details for object ${id}`);
+  //           return null;
+  //         }
+  //       }
+
+  //       // Filter: Ensure we have a primary image
+  //       const primaryImg = data.primaryImage || data.primaryImageSmall;
+  //       if (!primaryImg) return null;
+
+  //       // Map to your internal schema
+  //       return {
+  //         externalId: String(data.objectID),
+  //         title: data.title || "Untitled",
+  //         artist: data.artistDisplayName || "Unknown Artist",
+  //         // Using objectBeginDate is more reliable for a 'year' integer than parsing a string
+  //         year:
+  //           data.objectBeginDate ||
+  //           (data.objectDate ? parseInt(data.objectDate, 10) : null),
+  //         description: data.medium || data.culture || null,
+  //         imageUrl: primaryImg,
+  //         additionalImages: data.additionalImages?.join(",") || null,
+  //         metadata: data ? JSON.stringify(data) : null,
+  //         aiKeywords: null,
+  //         museumId: "met",
+  //       };
+  //     });
+
+  //     // Wait for all HTTP requests to finish and filter out nulls (failed or no-image items)
+  //     const itemsToUpsert = (await Promise.all(fetchPromises)).filter(
+  //       (item): item is NonNullable<typeof item> => item !== null,
+  //     );
+
+  //     // 3. DATABASE UPSERT (Handle duplicates and updates)
+  //     let importedCount = 0;
+  //     let updatedCount = 0;
+
+  //     const dbOperations = itemsToUpsert.map(async (item) => {
+  //       try {
+  //         const result = await prisma.collectionItem.upsert({
+  //           where: { externalId: item.externalId },
+  //           update: {
+  //             title: item.title,
+  //             artist: item.artist,
+  //             year: item.year,
+  //             description: item.description,
+  //             imageUrl: item.imageUrl,
+  //             additionalImages: item.additionalImages,
+  //             metadata: item.metadata,
+  //             updatedAt: new Date(),
+  //           },
+  //           create: item,
+  //         });
+
+  //         // Check if this was a create or an update
+  //         if (result.createdAt.getTime() === result.updatedAt.getTime()) {
+  //           importedCount++;
+  //         } else {
+  //           updatedCount++;
+  //         }
+  //       } catch (err) {
+  //         console.warn(`[IMPORT] Database error for item ${item.externalId}`);
+  //       }
+  //     });
+
+  //     await Promise.all(dbOperations);
+
+  //     console.log(
+  //       `[IMPORT] Success: ${importedCount} imported, ${updatedCount} updated.`,
+  //     );
+
+  //     return {
+  //       imported: importedCount,
+  //       updated: updatedCount,
+  //       totalProcessed: limitedIds.length,
+  //       totalFound: uniqueObjectIDs.length,
+  //       searchTerm: normalizedSearchTerm,
+  //       departments: departmentIds,
+  //     };
+  //   } catch (err: any) {
+  //     console.error("[IMPORT] Critical error during Met import:", err.message);
+  //     throw err;
+  //   }
+  // }
+
+  //Gemini 2.5 Flash
+  // async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
+  //   const normalizedSearchTerm = searchTerm.trim() || "*";
+
+  //   let countSkippedCopyright = 0;
+  //   let countSkippedNoImage = 0;
+  //   let countFetchFailed = 0;
+
+  //   try {
+  //     // 1. Fetch IDs based on Search + Department (AND logic)
+  //     const searchTasks =
+  //       departmentIds.length > 0
+  //         ? departmentIds.map((id) =>
+  //             axios.get(
+  //               "https://collectionapi.metmuseum.org/public/collection/v1/search",
+  //               {
+  //                 params: {
+  //                   q: normalizedSearchTerm,
+  //                   hasImages: true,
+  //                   departmentId: id,
+  //                 },
+  //                 timeout: 15000,
+  //               },
+  //             ),
+  //           )
+  //         : [
+  //             axios.get(
+  //               "https://collectionapi.metmuseum.org/public/collection/v1/search",
+  //               {
+  //                 params: { q: normalizedSearchTerm, hasImages: true },
+  //                 timeout: 15000,
+  //               },
+  //             ),
+  //           ];
+
+  //     const searchResponses = await Promise.all(searchTasks);
+  //     const uniqueObjectIDs = [
+  //       ...new Set(searchResponses.flatMap((res) => res.data.objectIDs ?? [])),
+  //     ];
+  //     const limitedIds = uniqueObjectIDs.slice(0, 80);
+
+  //     if (limitedIds.length === 0) {
+  //       return {
+  //         stats: { new: 0, updated: 0, removed: 0, skipped: 0 },
+  //         message: "No items matched your search criteria.",
+  //       };
+  //     }
+
+  //     // 2. Fetch and Map Details
+  //     const fetchPromises = limitedIds.map(async (id) => {
+  //       const cacheKey = `met-object-${id}`;
+  //       let data = metCache.get<any>(cacheKey);
+
+  //       if (!data) {
+  //         try {
+  //           const objRes = await axios.get(
+  //             `https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`,
+  //             { timeout: 10000 },
+  //           );
+  //           data = objRes.data;
+  //           metCache.set(cacheKey, data);
+  //         } catch (err) {
+  //           countFetchFailed++;
+  //           return null;
+  //         }
+  //       }
+
+  //       if (!data.isPublicDomain) {
+  //         countSkippedCopyright++;
+  //         return null;
+  //       }
+  //       const primaryImg = data.primaryImage || data.primaryImageSmall;
+  //       if (!primaryImg) {
+  //         countSkippedNoImage++;
+  //         return null;
+  //       }
+
+  //       return {
+  //         externalId: String(data.objectID),
+  //         title: data.title || "Untitled",
+  //         artist: data.artistDisplayName || "Unknown Artist",
+  //         year:
+  //           data.objectBeginDate ||
+  //           (data.objectDate ? parseInt(data.objectDate, 10) : null),
+  //         description: data.medium || data.culture || null,
+  //         imageUrl: primaryImg,
+  //         additionalImages: data.additionalImages?.join(",") || null,
+  //         metadata: JSON.stringify(data),
+  //         museumId: "met",
+  //       };
+  //     });
+
+  //     const itemsToUpsert = (await Promise.all(fetchPromises)).filter(
+  //       (item): item is NonNullable<typeof item> => item !== null,
+  //     );
+
+  //     // 3. Database Upsert
+  //     let importedCount = 0;
+  //     let updatedCount = 0;
+
+  //     const savedItems = await Promise.all(
+  //       itemsToUpsert.map(async (item) => {
+  //         try {
+  //           const result = await prisma.collectionItem.upsert({
+  //             where: { externalId: item.externalId },
+  //             update: { ...item, updatedAt: new Date() },
+  //             create: item,
+  //           });
+
+  //           if (result.createdAt.getTime() === result.updatedAt.getTime())
+  //             importedCount++;
+  //           else updatedCount++;
+
+  //           return result;
+  //         } catch (err) {
+  //           return null;
+  //         }
+  //       }),
+  //     );
+
+  //     // 4. Return the structure the UI expects
+  //     return {
+  //       items: savedItems.filter((i) => i !== null),
+  //       stats: {
+  //         new: importedCount,
+  //         updated: updatedCount,
+  //         removed: 0, // Met API doesn't tell us what to remove
+  //         skipped:
+  //           countSkippedCopyright + countSkippedNoImage + countFetchFailed,
+  //       },
+  //       message: `Successfully processed ${limitedIds.length} items from The Met.`,
+  //     };
+  //   } catch (err: any) {
+  //     console.error("[IMPORT] Critical Error:", err.message);
+  //     throw new Error(err.message);
+  //   }
+  // }
+
+  //Gemini 2.5 Flash
+  async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
+    const normalizedSearchTerm = searchTerm.trim() || "*";
+
+    // --- DEBUG LOGS ---
+    console.log(
+      `\n[IMPORT] Initializing search for: "${normalizedSearchTerm}"`,
+    );
+    console.log(
+      `[IMPORT] Target Departments: ${departmentIds.length > 0 ? departmentIds.join(", ") : "All"}`,
+    );
+
+    let countSkippedCopyright = 0;
+    let countSkippedNoImage = 0;
+    let countFetchFailed = 0;
 
     try {
-      const searchRes = await axios.get(
-        "https://collectionapi.metmuseum.org/public/collection/v1/search",
-        { params, timeout: 15000 },
-      );
+      const searchTasks =
+        departmentIds.length > 0
+          ? departmentIds.map((id) =>
+              axios.get(
+                "https://collectionapi.metmuseum.org/public/collection/v1/search",
+                {
+                  params: {
+                    q: normalizedSearchTerm,
+                    hasImages: true,
+                    departmentId: id,
+                  },
+                  timeout: 15000,
+                },
+              ),
+            )
+          : [
+              axios.get(
+                "https://collectionapi.metmuseum.org/public/collection/v1/search",
+                {
+                  params: { q: normalizedSearchTerm, hasImages: true },
+                  timeout: 15000,
+                },
+              ),
+            ];
 
-      const objectIDs = searchRes.data.objectIDs ?? [];
+      const searchResponses = await Promise.all(searchTasks);
+      const uniqueObjectIDs = [
+        ...new Set(searchResponses.flatMap((res) => res.data.objectIDs ?? [])),
+      ];
+
+      // --- DEBUG LOGS ---
       console.log(
-        `[IMPORT] Met returned ${objectIDs.length} items for q="${params.q}"` +
-          (departmentIds.length ? `, departments=${params.departmentId}` : ""),
+        `[IMPORT] API found ${uniqueObjectIDs.length} total results for "${normalizedSearchTerm}"`,
       );
 
-      if (objectIDs.length === 0) {
-        return { imported: 0, message: "No items found for this search" };
+      const limitedIds = uniqueObjectIDs.slice(0, 80);
+      console.log(`[IMPORT] Processing top ${limitedIds.length} items...`);
+
+      if (limitedIds.length === 0) {
+        return {
+          stats: { new: 0, updated: 0, removed: 0, skipped: 0 },
+          message: "No items matched your search criteria.",
+        };
       }
 
-      const items: any[] = [];
-      const limitedIds = objectIDs.slice(0, 80); // adjustable limit
-
-      for (const id of limitedIds) {
+      const fetchPromises = limitedIds.map(async (id) => {
         const cacheKey = `met-object-${id}`;
         let data = metCache.get<any>(cacheKey);
 
@@ -232,57 +512,96 @@ export class CollectionService {
             data = objRes.data;
             metCache.set(cacheKey, data);
           } catch (err) {
-            console.warn(`[IMPORT] Failed to fetch object ${id}`);
-            continue;
+            countFetchFailed++;
+            return null;
           }
         }
 
-        // Strict image filter
+        if (!data.isPublicDomain) {
+          countSkippedCopyright++;
+          return null;
+        }
         const primaryImg = data.primaryImage || data.primaryImageSmall;
-        if (!primaryImg) continue;
+        if (!primaryImg) {
+          countSkippedNoImage++;
+          return null;
+        }
 
-        items.push({
+        return {
           externalId: String(data.objectID),
           title: data.title || "Untitled",
-          artist: data.artistDisplayName || null,
-          year: data.objectDate ? parseInt(data.objectDate, 10) : null,
+          artist: data.artistDisplayName || "Unknown Artist",
+          year:
+            data.objectBeginDate ||
+            (data.objectDate ? parseInt(data.objectDate, 10) : null),
           description: data.medium || data.culture || null,
           imageUrl: primaryImg,
           additionalImages: data.additionalImages?.join(",") || null,
-          metadata: data ? JSON.stringify(data) : null,
-          aiKeywords: null,
+          metadata: JSON.stringify(data),
           museumId: "met",
-        });
-      }
+        };
+      });
+
+      const itemsToUpsert = (await Promise.all(fetchPromises)).filter(
+        (item): item is NonNullable<typeof item> => item !== null,
+      );
 
       let importedCount = 0;
-      if (items.length > 0) {
-        const result = await prisma.collectionItem.createMany({
-          data: items,
-          //skipDuplicates: true, // if your SQLite supports it — otherwise remove
-        });
-        importedCount = result.count;
-        console.log(`[IMPORT] Saved ${importedCount} new items`);
-      }
+      let updatedCount = 0;
+
+      const savedItems = await Promise.all(
+        itemsToUpsert.map(async (item) => {
+          try {
+            const result = await prisma.collectionItem.upsert({
+              where: { externalId: item.externalId },
+              update: { ...item, updatedAt: new Date() },
+              create: item,
+            });
+
+            if (result.createdAt.getTime() === result.updatedAt.getTime())
+              importedCount++;
+            else updatedCount++;
+
+            return result;
+          } catch (err) {
+            return null;
+          }
+        }),
+      );
+
+      // --- FINAL DEBUG LOG ---
+      console.log(
+        `[IMPORT] Completed. New: ${importedCount}, Updated: ${updatedCount}, Skipped: ${countSkippedCopyright + countSkippedNoImage + countFetchFailed}\n`,
+      );
 
       return {
-        imported: importedCount,
-        totalProcessed: limitedIds.length,
-        totalFound: objectIDs.length,
-        searchTerm: params.q,
-        departments: departmentIds.length ? departmentIds : null,
+        items: savedItems.filter((i) => i !== null),
+        stats: {
+          new: importedCount,
+          updated: updatedCount,
+          removed: 0,
+          skipped:
+            countSkippedCopyright + countSkippedNoImage + countFetchFailed,
+        },
+        message: `Successfully processed ${limitedIds.length} items from The Met.`,
       };
     } catch (err: any) {
-      console.error("[IMPORT] Critical error:", err.message);
-      throw err;
+      console.error("[IMPORT] Critical Error:", err.message);
+      throw new Error(err.message);
     }
   }
   // ==================== AI ENRICHMENT (with cache per image) ====================
   async enrichWithAI(itemId: string) {
+    console.log(`[ENRICH] Enriching item ${itemId}`);
+
     const item = await prisma.collectionItem.findUnique({
       where: { id: itemId },
+      //where: { id: 'accd6378-7883-4fc9-bfbb-d479c232924e' },
     });
-    if (!item || !item.imageUrl) return item;
+    if (!item || !item.imageUrl) {
+      console.log(`[ENRICH] Item ${itemId} not found or no image URL`);
+      return item;
+    }
 
     // Cache key based on image URL (stable across runs)
     const imageHash = crypto
@@ -316,7 +635,8 @@ export class CollectionService {
                 text: `You are an expert art historian. Analyze the artwork titled "${item.title || "Untitled"}" by ${item.artist || "unknown"}.
                 Return **exactly 8-12 unique, specific, descriptive keywords** (no generics like "art" or "painting").
                 Focus on: visual elements, colors, style period, composition, mood, subjects, technique.
-                Return only a JSON array. Examples: ["sepia photograph", "formal attire", "mustache", "railway station", "19th century portrait"]`,
+                **IMPORTANT: Return ONLY a raw JSON array with no markdown formatting, no code blocks, no explanations.**
+                Example format: ["sepia photograph", "formal attire", "mustache", "railway station", "19th century portrait"]`,
               },
               {
                 type: "image_url",
@@ -329,7 +649,13 @@ export class CollectionService {
         temperature: 0.35,
       });
 
-      const content = response.choices[0]?.message?.content ?? "[]";
+      let content = response.choices[0]?.message?.content ?? "[]";
+      
+      // Strip markdown code blocks if present
+      content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      
+      console.log(`[AI] Raw response for ${item.title}:`, content);
+      
       keywords = JSON.parse(content);
       if (!Array.isArray(keywords)) keywords = [];
       keywords = [...new Set(keywords)]; // dedupe
@@ -349,14 +675,21 @@ export class CollectionService {
     });
   }
 
-  // ==================== GET ALL ITEMS (with parsed arrays) ====================
-  async getAllItems() {
+  // ==================== GET ALL ITEMS (with pagination) ====================
+  async getAllItems(page: number = 1, limit: number = 100) {
+    const skip = (page - 1) * limit;
+
+    // Get total count for pagination metadata
+    const totalCount = await prisma.collectionItem.count();
+
+    // Get items for current page
     const items = await prisma.collectionItem.findMany({
-      take: 100, // increased for better demo
+      skip,
+      take: limit,
       orderBy: { createdAt: "desc" },
     });
 
-    return items.map((item: any) => ({
+    const formattedItems = items.map((item: any) => ({
       ...item,
       additionalImages: item.additionalImages
         ? item.additionalImages.split(",")
@@ -364,6 +697,18 @@ export class CollectionService {
       metadata: item.metadata ? JSON.parse(item.metadata) : null,
       aiKeywords: item.aiKeywords ? item.aiKeywords.split(",") : [],
     }));
+
+    return {
+      items: formattedItems,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalCount / limit),
+        totalItems: totalCount,
+        itemsPerPage: limit,
+        hasNextPage: page < Math.ceil(totalCount / limit),
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 
   // ==================== CSV IMPORT (mock) ====================
@@ -385,5 +730,32 @@ export class CollectionService {
 
     await prisma.collectionItem.createMany({ data: mockItems });
     return { imported: mockItems.length };
+  }
+
+  async getDepartments() {
+    const cacheKey = "met-departments";
+
+    const cached = metCache.get(cacheKey);
+    if (cached) {
+      console.log("[DEPARTMENTS] Cache hit");
+      return cached;
+    }
+
+    try {
+      const response = await axios.get(
+        "https://collectionapi.metmuseum.org/public/collection/v1/departments",
+        { timeout: 8000 },
+      );
+
+      const departments = response.data.departments || [];
+      metCache.set(cacheKey, departments);
+
+      console.log(`[DEPARTMENTS] Fetched ${departments.length} departments`);
+      return departments;
+    } catch (err: any) {
+      console.error("[DEPARTMENTS SERVICE] Error:", err.message);
+      // Return empty array instead of crashing
+      return [];
+    }
   }
 }

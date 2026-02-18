@@ -306,6 +306,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Check,
   ChevronsUpDown,
+  ChevronLeft,
+  ChevronRight,
   RefreshCw,
   Search,
   Sparkles,
@@ -314,7 +316,12 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 export default function CollectionBrowser() {
-  const { data: items = [], isLoading } = useItems();
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 100;
+  
+  const { data: response, isLoading } = useItems(currentPage, itemsPerPage);
+  const items = response?.items || [];
+  const pagination = response?.pagination;
   const importMutation = useImportMet();
   const enrichMutation = useEnrichItem();
 
@@ -391,9 +398,16 @@ export default function CollectionBrowser() {
       <div className="mx-auto max-w-screen-2xl px-6 sm:px-10 lg:px-16 xl:px-20 2xl:px-24">
         {/* Header & Controls */}
         <div className="mb-10 flex flex-col gap-6">
-          <h1 className="text-4xl font-bold tracking-tight text-center sm:text-left">
-            Collection Browser
-          </h1>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <h1 className="text-4xl font-bold tracking-tight text-center sm:text-left">
+              Collection Browser
+            </h1>
+            {pagination && (
+              <div className="text-sm text-muted-foreground text-center sm:text-right">
+                <span className="font-medium">{pagination.totalItems}</span> total items stored
+              </div>
+            )}
+          </div>
 
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
             {/* Keyword Search */}
@@ -563,6 +577,68 @@ export default function CollectionBrowser() {
                 </CardContent>
               </Card>
             ))}
+          </div>
+        )}
+        
+        {/* Pagination Controls */}
+        {pagination && pagination.totalPages > 1 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-8 p-4 bg-muted/30 rounded-lg">
+            <div className="text-sm text-muted-foreground">
+              Showing {items.length} of {pagination.totalItems} items 
+              {pagination.totalItems > itemsPerPage && (
+                <span> (Page {pagination.currentPage} of {pagination.totalPages})</span>
+              )}
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={!pagination.hasPreviousPage}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+              
+              <div className="flex items-center gap-1">
+                {/* Show page numbers */}
+                {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (pagination.totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= pagination.totalPages - 2) {
+                    pageNum = pagination.totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={pageNum === currentPage ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setCurrentPage(pageNum)}
+                      className="w-8 h-8 p-0"
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+              </div>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.min(pagination.totalPages, prev + 1))}
+                disabled={!pagination.hasNextPage}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         )}
       </div>
