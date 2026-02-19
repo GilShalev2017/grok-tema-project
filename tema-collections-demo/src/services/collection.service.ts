@@ -3,6 +3,8 @@ import axios from "axios";
 import OpenAI from "openai";
 import NodeCache from "node-cache";
 import crypto from "crypto";
+import { Express } from "express";
+import Papa from "papaparse";
 
 // Singleton Prisma
 import prisma from "../lib/prisma";
@@ -14,6 +16,23 @@ const aiCache = new NodeCache({ stdTTL: 86400, checkperiod: 600 }); // 24 hours 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 console.log("[SERVICE] File loaded successfully");
+
+// Helper function to parse CSV data
+function parseCSV(csvText: string): any[] {
+  const result = Papa.parse(csvText, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (header) => header.trim(),
+    transform: (value) => value.trim()
+  });
+  
+  if (result.errors.length > 0) {
+    console.error("[CSV PARSE] Errors:", result.errors);
+    throw new Error(`CSV parsing failed: ${result.errors.map(e => e.message).join(', ')}`);
+  }
+  
+  return result.data;
+}
 
 export class CollectionService {
   // ==================== MET IMPORT (with image filter + cache) ====================
@@ -650,12 +669,15 @@ export class CollectionService {
       });
 
       let content = response.choices[0]?.message?.content ?? "[]";
-      
+
       // Strip markdown code blocks if present
-      content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      
+      content = content
+        .replace(/```json\n?/g, "")
+        .replace(/```\n?/g, "")
+        .trim();
+
       console.log(`[AI] Raw response for ${item.title}:`, content);
-      
+
       keywords = JSON.parse(content);
       if (!Array.isArray(keywords)) keywords = [];
       keywords = [...new Set(keywords)]; // dedupe
@@ -711,26 +733,7 @@ export class CollectionService {
     };
   }
 
-  // ==================== CSV IMPORT (mock) ====================
-  async importFromCSV(filePath: string) {
-    const mockItems = [
-      {
-        externalId: "csv-001",
-        title: "Portrait of a Lady",
-        artist: "Unknown",
-        year: 1780,
-        description: "Example CSV import",
-        imageUrl: "https://picsum.photos/id/1015/800/600", // placeholder with image
-        additionalImages: null,
-        metadata: null,
-        aiKeywords: null,
-        museumId: "demo",
-      },
-    ];
-
-    await prisma.collectionItem.createMany({ data: mockItems });
-    return { imported: mockItems.length };
-  }
+  // ==================== CSV IMPORT ====================
 
   async getDepartments() {
     const cacheKey = "met-departments";
@@ -757,5 +760,33 @@ export class CollectionService {
       // Return empty array instead of crashing
       return [];
     }
+  }
+
+  // Backend: src/services/collection.service.ts
+
+  async importFromCSV(csvFile: Express.Multer.File) {
+    if (!csvFile) {
+      throw new Error("No CSV file provided");
+    }
+    
+    const csvText = csvFile.buffer.toString();
+    const rows = parseCSV(csvText); // Use papaparse or csv-parser
+
+    const items = rows.map((row) => ({
+      id: row.id,
+      museumId: "custom",
+      externalId: row.id,
+      title: row.title,
+      artist: row.artist,
+      year: parseInt(row.year),
+      imageUrl: row.imageUrl,
+      description: row.description,
+      department: row.department || "Unknown",
+      tags: row.tags ? row.tags.split(",") : [],
+      // ... map other fields
+    }));
+
+    await prisma.collectionItem.createMany({ data: items });
+    return items;
   }
 }
