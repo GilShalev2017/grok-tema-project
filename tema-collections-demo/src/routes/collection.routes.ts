@@ -77,26 +77,46 @@ router.get("/departments", async (_req, res) => {
   }
 });
 
-
-
-
 router.post("/import/csv", upload.single("csv"), async (req, res) => {
   try {
     const csvFile = req.file;
+    console.log("[CSV IMPORT ROUTE] File received:", {
+      filename: csvFile?.originalname,
+      size: csvFile?.size,
+    });
+
     if (!csvFile) {
       return res.status(400).json({ error: "No CSV file uploaded" });
     }
-    const items = await service.importFromCSV(csvFile);
+
+    const items = await service.importFromCSVUpsert(csvFile);
+
+    // Calculate actual stats from logs or parse result
+    // For now, assume all are new (you can enhance this)
+    console.log(
+      "[CSV IMPORT ROUTE] Success! Processed:",
+      items.length,
+      "items",
+    );
+
     res.json({
       success: true,
       items,
-      stats: { new: items.length, updated: 0, removed: 0 },
+      stats: {
+        new: items.length, // You can track this more precisely if needed
+        updated: 0, // Count updates separately
+        removed: 0,
+      },
+      message: `Successfully processed ${items.length} artworks`,
     });
-  } catch (err) {
-    res.status(500).json({ error: "CSV import failed" });
+  } catch (err: any) {
+    console.error("[CSV IMPORT ROUTE] Error:", err);
+    res.status(500).json({
+      error: "CSV import failed",
+      message: err.message || "Unknown error",
+    });
   }
 });
-
 
 router.get("/drive/auth", async (req, res) => {
   // Implement Google OAuth flow

@@ -5,7 +5,7 @@ import NodeCache from "node-cache";
 import crypto from "crypto";
 import { Express } from "express";
 import Papa from "papaparse";
-
+import { v4 as uuidv4 } from "uuid";
 // Singleton Prisma
 import prisma from "../lib/prisma";
 
@@ -17,445 +17,43 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 console.log("[SERVICE] File loaded successfully");
 
-// Helper function to parse CSV data
-function parseCSV(csvText: string): any[] {
-  const result = Papa.parse(csvText, {
-    header: true,
-    skipEmptyLines: true,
-    transformHeader: (header) => header.trim(),
-    transform: (value) => value.trim()
-  });
-  
-  if (result.errors.length > 0) {
-    console.error("[CSV PARSE] Errors:", result.errors);
-    throw new Error(`CSV parsing failed: ${result.errors.map(e => e.message).join(', ')}`);
-  }
-  
-  return result.data;
+// Interface for CSV row data
+interface CSVRow {
+  id?: string;
+  title?: string;
+  artist?: string;
+  year?: string;
+  imageUrl?: string;
+  description?: string;
+  department?: string;
+  culture?: string;
+  classification?: string;
+  medium?: string;
+  dimensions?: string;
+  credit?: string;
+  tags?: string;
 }
 
+// Helper function to parse CSV data
+// function parseCSV(csvText: string): any[] {
+//   const result = Papa.parse(csvText, {
+//     header: true,
+//     skipEmptyLines: true,
+//     transformHeader: (header) => header.trim(),
+//     transform: (value) => value.trim(),
+//   });
+
+//   if (result.errors.length > 0) {
+//     console.error("[CSV PARSE] Errors:", result.errors);
+//     throw new Error(
+//       `CSV parsing failed: ${result.errors.map((e) => e.message).join(", ")}`,
+//     );
+//   }
+
+//   return result.data;
+// }
+
 export class CollectionService {
-  // ==================== MET IMPORT (with image filter + cache) ====================
-  // async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
-  //   const params: any = {
-  //     hasImages: true,
-  //     q: searchTerm.trim() || "*",
-  //   };
-
-  //   // Add departments only if provided
-  //   if (departmentIds.length > 0) {
-  //     params.departmentId = departmentIds.join("|");
-  //   }
-
-  //   try {
-  //     const searchRes = await axios.get(
-  //       "https://collectionapi.metmuseum.org/public/collection/v1/search",
-  //       { params, timeout: 15000 },
-  //     );
-
-  //     const objectIDs = searchRes.data.objectIDs ?? [];
-  //     console.log(
-  //       `[IMPORT] Met returned ${objectIDs.length} items for q="${params.q}"` +
-  //         (departmentIds.length ? `, departments=${params.departmentId}` : ""),
-  //     );
-
-  //     if (objectIDs.length === 0) {
-  //       return { imported: 0, message: "No items found for this search" };
-  //     }
-
-  //     const items: any[] = [];
-  //     const limitedIds = objectIDs.slice(0, 80); // adjustable limit
-
-  //     let dbgItemsWithoutImageCounter = 0;
-
-  //     for (const id of limitedIds) {
-  //       const cacheKey = `met-object-${id}`;
-  //       let data = metCache.get<any>(cacheKey);
-
-  //       if (!data) {
-  //         try {
-  //           const objRes = await axios.get(
-  //             `https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`,
-  //             { timeout: 10000 },
-  //           );
-  //           data = objRes.data;
-  //           metCache.set(cacheKey, data);
-  //         } catch (err) {
-  //           console.warn(`[IMPORT] Failed to fetch object ${id}`);
-  //           continue;
-  //         }
-  //       }
-
-  //       // Strict image filter
-  //       const primaryImg = data.primaryImage || data.primaryImageSmall;
-
-  //       if (!primaryImg) {
-  //         dbgItemsWithoutImageCounter++;
-  //         continue;
-  //       }
-
-  //       items.push({
-  //         externalId: String(data.objectID),
-  //         title: data.title || "Untitled",
-  //         artist: data.artistDisplayName || null,
-  //         year: data.objectDate ? parseInt(data.objectDate, 10) : null,
-  //         description: data.medium || data.culture || null,
-  //         imageUrl: primaryImg,
-  //         additionalImages: data.additionalImages?.join(",") || null,
-  //         metadata: data ? JSON.stringify(data) : null,
-  //         aiKeywords: null,
-  //         museumId: "met",
-  //       });
-  //     }
-
-  //     console.log(`found ${dbgItemsWithoutImageCounter} items without image!`);
-
-  //     let importedCount = 0;
-  //     let updatedCount = 0;
-
-  //     if (items.length > 0) {
-  //       // Process items individually with upsert to handle duplicates
-  //       for (const item of items) {
-  //         try {
-  //           const result = await prisma.collectionItem.upsert({
-  //             where: {
-  //               externalId: item.externalId,
-  //             },
-  //             update: {
-  //               title: item.title,
-  //               artist: item.artist,
-  //               year: item.year,
-  //               description: item.description,
-  //               imageUrl: item.imageUrl,
-  //               additionalImages: item.additionalImages,
-  //               metadata: item.metadata,
-  //               updatedAt: new Date(),
-  //             },
-  //             create: item,
-  //           });
-
-  //           if (
-  //             result.createdAt.toISOString() === result.updatedAt.toISOString()
-  //           ) {
-  //             importedCount++;
-  //           } else {
-  //             updatedCount++;
-  //           }
-  //         } catch (err) {
-  //           console.warn(
-  //             `[IMPORT] Failed to upsert item ${item.externalId}:`,
-  //             err,
-  //           );
-  //         }
-  //       }
-
-  //       console.log(
-  //         `[IMPORT] Saved ${importedCount} new items, updated ${updatedCount} existing items`,
-  //       );
-  //     }
-
-  //     return {
-  //       imported: importedCount,
-  //       updated: updatedCount,
-  //       totalProcessed: limitedIds.length,
-  //       totalFound: objectIDs.length,
-  //       searchTerm: params.q,
-  //       departments: departmentIds.length ? departmentIds : null,
-  //     };
-  //   } catch (err: any) {
-  //     console.error("[IMPORT] Critical error:", err.message);
-  //     throw err;
-  //   }
-  // }
-
-  //Gemini 1
-  // async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
-  //   const normalizedSearchTerm = searchTerm.trim() || "*";
-
-  //   try {
-  //     // 1. FETCH SEARCH IDs (Handle multiple departments)
-  //     // The Met API /search endpoint only supports ONE departmentId per call.
-  //     // We run searches in parallel for each department provided.
-  //     const searchTasks =
-  //       departmentIds.length > 0
-  //         ? departmentIds.map((id) =>
-  //             axios.get(
-  //               "https://collectionapi.metmuseum.org/public/collection/v1/search",
-  //               {
-  //                 params: {
-  //                   q: normalizedSearchTerm,
-  //                   hasImages: true,
-  //                   departmentId: id,
-  //                 },
-  //                 timeout: 15000,
-  //               },
-  //             ),
-  //           )
-  //         : [
-  //             axios.get(
-  //               "https://collectionapi.metmuseum.org/public/collection/v1/search",
-  //               {
-  //                 params: { q: normalizedSearchTerm, hasImages: true },
-  //                 timeout: 15000,
-  //               },
-  //             ),
-  //           ];
-
-  //     const searchResponses = await Promise.all(searchTasks);
-
-  //     // Merge all objectIDs and remove duplicates using a Set
-  //     const allObjectIDs = searchResponses.flatMap(
-  //       (res) => res.data.objectIDs ?? [],
-  //     );
-  //     const uniqueObjectIDs = [...new Set(allObjectIDs)];
-
-  //     const limitedIds = uniqueObjectIDs.slice(0, 80); // API limit is ~80 requests per second
-
-  //     console.log(
-  //       `[IMPORT] Met found ${uniqueObjectIDs.length} unique items. Processing first ${limitedIds.length}...`,
-  //     );
-
-  //     if (limitedIds.length === 0) {
-  //       return { imported: 0, message: "No items found for this search" };
-  //     }
-
-  //     // 2. FETCH OBJECT DETAILS IN PARALLEL
-  //     // This is significantly faster than a sequential for-loop.
-  //     const fetchPromises = limitedIds.map(async (id) => {
-  //       const cacheKey = `met-object-${id}`;
-  //       let data = metCache.get<any>(cacheKey);
-
-  //       if (!data) {
-  //         try {
-  //           const objRes = await axios.get(
-  //             `https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`,
-  //             { timeout: 10000 },
-  //           );
-  //           data = objRes.data;
-  //           metCache.set(cacheKey, data);
-  //         } catch (err) {
-  //           console.warn(`[IMPORT] Failed to fetch details for object ${id}`);
-  //           return null;
-  //         }
-  //       }
-
-  //       // Filter: Ensure we have a primary image
-  //       const primaryImg = data.primaryImage || data.primaryImageSmall;
-  //       if (!primaryImg) return null;
-
-  //       // Map to your internal schema
-  //       return {
-  //         externalId: String(data.objectID),
-  //         title: data.title || "Untitled",
-  //         artist: data.artistDisplayName || "Unknown Artist",
-  //         // Using objectBeginDate is more reliable for a 'year' integer than parsing a string
-  //         year:
-  //           data.objectBeginDate ||
-  //           (data.objectDate ? parseInt(data.objectDate, 10) : null),
-  //         description: data.medium || data.culture || null,
-  //         imageUrl: primaryImg,
-  //         additionalImages: data.additionalImages?.join(",") || null,
-  //         metadata: data ? JSON.stringify(data) : null,
-  //         aiKeywords: null,
-  //         museumId: "met",
-  //       };
-  //     });
-
-  //     // Wait for all HTTP requests to finish and filter out nulls (failed or no-image items)
-  //     const itemsToUpsert = (await Promise.all(fetchPromises)).filter(
-  //       (item): item is NonNullable<typeof item> => item !== null,
-  //     );
-
-  //     // 3. DATABASE UPSERT (Handle duplicates and updates)
-  //     let importedCount = 0;
-  //     let updatedCount = 0;
-
-  //     const dbOperations = itemsToUpsert.map(async (item) => {
-  //       try {
-  //         const result = await prisma.collectionItem.upsert({
-  //           where: { externalId: item.externalId },
-  //           update: {
-  //             title: item.title,
-  //             artist: item.artist,
-  //             year: item.year,
-  //             description: item.description,
-  //             imageUrl: item.imageUrl,
-  //             additionalImages: item.additionalImages,
-  //             metadata: item.metadata,
-  //             updatedAt: new Date(),
-  //           },
-  //           create: item,
-  //         });
-
-  //         // Check if this was a create or an update
-  //         if (result.createdAt.getTime() === result.updatedAt.getTime()) {
-  //           importedCount++;
-  //         } else {
-  //           updatedCount++;
-  //         }
-  //       } catch (err) {
-  //         console.warn(`[IMPORT] Database error for item ${item.externalId}`);
-  //       }
-  //     });
-
-  //     await Promise.all(dbOperations);
-
-  //     console.log(
-  //       `[IMPORT] Success: ${importedCount} imported, ${updatedCount} updated.`,
-  //     );
-
-  //     return {
-  //       imported: importedCount,
-  //       updated: updatedCount,
-  //       totalProcessed: limitedIds.length,
-  //       totalFound: uniqueObjectIDs.length,
-  //       searchTerm: normalizedSearchTerm,
-  //       departments: departmentIds,
-  //     };
-  //   } catch (err: any) {
-  //     console.error("[IMPORT] Critical error during Met import:", err.message);
-  //     throw err;
-  //   }
-  // }
-
-  //Gemini 2.5 Flash
-  // async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
-  //   const normalizedSearchTerm = searchTerm.trim() || "*";
-
-  //   let countSkippedCopyright = 0;
-  //   let countSkippedNoImage = 0;
-  //   let countFetchFailed = 0;
-
-  //   try {
-  //     // 1. Fetch IDs based on Search + Department (AND logic)
-  //     const searchTasks =
-  //       departmentIds.length > 0
-  //         ? departmentIds.map((id) =>
-  //             axios.get(
-  //               "https://collectionapi.metmuseum.org/public/collection/v1/search",
-  //               {
-  //                 params: {
-  //                   q: normalizedSearchTerm,
-  //                   hasImages: true,
-  //                   departmentId: id,
-  //                 },
-  //                 timeout: 15000,
-  //               },
-  //             ),
-  //           )
-  //         : [
-  //             axios.get(
-  //               "https://collectionapi.metmuseum.org/public/collection/v1/search",
-  //               {
-  //                 params: { q: normalizedSearchTerm, hasImages: true },
-  //                 timeout: 15000,
-  //               },
-  //             ),
-  //           ];
-
-  //     const searchResponses = await Promise.all(searchTasks);
-  //     const uniqueObjectIDs = [
-  //       ...new Set(searchResponses.flatMap((res) => res.data.objectIDs ?? [])),
-  //     ];
-  //     const limitedIds = uniqueObjectIDs.slice(0, 80);
-
-  //     if (limitedIds.length === 0) {
-  //       return {
-  //         stats: { new: 0, updated: 0, removed: 0, skipped: 0 },
-  //         message: "No items matched your search criteria.",
-  //       };
-  //     }
-
-  //     // 2. Fetch and Map Details
-  //     const fetchPromises = limitedIds.map(async (id) => {
-  //       const cacheKey = `met-object-${id}`;
-  //       let data = metCache.get<any>(cacheKey);
-
-  //       if (!data) {
-  //         try {
-  //           const objRes = await axios.get(
-  //             `https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`,
-  //             { timeout: 10000 },
-  //           );
-  //           data = objRes.data;
-  //           metCache.set(cacheKey, data);
-  //         } catch (err) {
-  //           countFetchFailed++;
-  //           return null;
-  //         }
-  //       }
-
-  //       if (!data.isPublicDomain) {
-  //         countSkippedCopyright++;
-  //         return null;
-  //       }
-  //       const primaryImg = data.primaryImage || data.primaryImageSmall;
-  //       if (!primaryImg) {
-  //         countSkippedNoImage++;
-  //         return null;
-  //       }
-
-  //       return {
-  //         externalId: String(data.objectID),
-  //         title: data.title || "Untitled",
-  //         artist: data.artistDisplayName || "Unknown Artist",
-  //         year:
-  //           data.objectBeginDate ||
-  //           (data.objectDate ? parseInt(data.objectDate, 10) : null),
-  //         description: data.medium || data.culture || null,
-  //         imageUrl: primaryImg,
-  //         additionalImages: data.additionalImages?.join(",") || null,
-  //         metadata: JSON.stringify(data),
-  //         museumId: "met",
-  //       };
-  //     });
-
-  //     const itemsToUpsert = (await Promise.all(fetchPromises)).filter(
-  //       (item): item is NonNullable<typeof item> => item !== null,
-  //     );
-
-  //     // 3. Database Upsert
-  //     let importedCount = 0;
-  //     let updatedCount = 0;
-
-  //     const savedItems = await Promise.all(
-  //       itemsToUpsert.map(async (item) => {
-  //         try {
-  //           const result = await prisma.collectionItem.upsert({
-  //             where: { externalId: item.externalId },
-  //             update: { ...item, updatedAt: new Date() },
-  //             create: item,
-  //           });
-
-  //           if (result.createdAt.getTime() === result.updatedAt.getTime())
-  //             importedCount++;
-  //           else updatedCount++;
-
-  //           return result;
-  //         } catch (err) {
-  //           return null;
-  //         }
-  //       }),
-  //     );
-
-  //     // 4. Return the structure the UI expects
-  //     return {
-  //       items: savedItems.filter((i) => i !== null),
-  //       stats: {
-  //         new: importedCount,
-  //         updated: updatedCount,
-  //         removed: 0, // Met API doesn't tell us what to remove
-  //         skipped:
-  //           countSkippedCopyright + countSkippedNoImage + countFetchFailed,
-  //       },
-  //       message: `Successfully processed ${limitedIds.length} items from The Met.`,
-  //     };
-  //   } catch (err: any) {
-  //     console.error("[IMPORT] Critical Error:", err.message);
-  //     throw new Error(err.message);
-  //   }
-  // }
-
   //Gemini 2.5 Flash
   async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
     const normalizedSearchTerm = searchTerm.trim() || "*";
@@ -762,31 +360,276 @@ export class CollectionService {
     }
   }
 
-  // Backend: src/services/collection.service.ts
+  /**
+   * Import artworks from CSV file
+   * @param csvFile - Multer file object containing CSV data
+   * @param imageFiles - Optional array of uploaded image files (not used yet)
+   */
+  async importFromCSV(
+    csvFile: Express.Multer.File,
+    imageFiles?: Express.Multer.File[],
+  ): Promise<any[]> {
+    console.log("[CSV IMPORT] Starting import...");
+    console.log("[CSV IMPORT] File size:", csvFile.size, "bytes");
 
-  async importFromCSV(csvFile: Express.Multer.File) {
-    if (!csvFile) {
-      throw new Error("No CSV file provided");
+    try {
+      // Step 1: Convert buffer to string
+      const csvText = csvFile.buffer.toString("utf-8");
+      console.log("[CSV IMPORT] CSV text preview:", csvText.substring(0, 200));
+
+      // Step 2: Parse CSV using papaparse
+      return new Promise((resolve, reject) => {
+        Papa.parse(csvText, {
+          header: true, // First row is headers
+          skipEmptyLines: true, // Ignore empty rows
+          transformHeader: (header) => header.trim(), // Clean headers
+          complete: async (results) => {
+            try {
+              console.log("[CSV IMPORT] Parsed rows:", results.data.length);
+              console.log("[CSV IMPORT] First row sample:", results.data[0]);
+
+              // Step 3: Transform CSV rows to database format
+              const items = (results.data as any[]).map((row: any) => {
+                // Clean and validate data
+                const id = uuidv4();
+                const externalId = row.id?.trim() || id;
+                const title = row.title?.trim() || "Untitled";
+                const artist = row.artist?.trim() || null;
+                const year = row.year ? parseInt(row.year) : null;
+                const imageUrl = row.imageUrl?.trim() || null;
+                const description = row.description?.trim() || null;
+                const department = row.department?.trim() || "Unknown";
+                const culture = row.culture?.trim() || null;
+
+                // Parse tags (comma-separated string to array)
+                const tags = row.tags
+                  ? row.tags
+                      .split(",")
+                      .map((t: string) => t.trim())
+                      .filter(Boolean)
+                  : [];
+
+                console.log("[CSV IMPORT] Processing item:", {
+                  id: externalId,
+                  title,
+                  artist,
+                });
+
+                return {
+                  id,
+                  museumId: "custom",
+                  externalId,
+                  title,
+                  artist,
+                  year,
+                  imageUrl,
+                  description,
+                  aiKeywords: tags.join(", "), // Convert array to comma-separated string
+                  additionalImages: "", // Empty string instead of array
+                  metadata: JSON.stringify({}), // Convert object to JSON string
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                };
+              });
+
+              console.log("[CSV IMPORT] Transformed items:", items.length);
+              console.log("[CSV IMPORT] Sample item:", items[0]);
+
+              // Step 4: Save to database
+              // IMPORTANT: Use createMany for bulk insert
+              const result = await prisma.collectionItem.createMany({
+                data: items,
+              });
+
+              console.log("[CSV IMPORT] Saved to DB:", result.count, "items");
+
+              // Step 5: Return the items for the response
+              // Note: createMany doesn't return the created items, so we fetch them
+              const savedItems = await prisma.collectionItem.findMany({
+                where: {
+                  externalId: {
+                    in: items.map((i) => i.externalId),
+                  },
+                },
+                orderBy: {
+                  createdAt: "desc",
+                },
+              });
+
+              console.log(
+                "[CSV IMPORT] Success! Retrieved:",
+                savedItems.length,
+                "items",
+              );
+              resolve(savedItems);
+            } catch (error) {
+              console.error("[CSV IMPORT] Error processing CSV:", error);
+              reject(error);
+            }
+          },
+          error: (error: { message: any }) => {
+            console.error("[CSV IMPORT] Papa parse error:", error);
+            reject(new Error(`CSV parsing failed: ${error.message}`));
+          },
+        });
+      });
+    } catch (error) {
+      console.error("[CSV IMPORT] Top-level error:", error);
+      throw error;
     }
-    
-    const csvText = csvFile.buffer.toString();
-    const rows = parseCSV(csvText); // Use papaparse or csv-parser
+  }
 
-    const items = rows.map((row) => ({
-      id: row.id,
-      museumId: "custom",
-      externalId: row.id,
-      title: row.title,
-      artist: row.artist,
-      year: parseInt(row.year),
-      imageUrl: row.imageUrl,
-      description: row.description,
-      department: row.department || "Unknown",
-      tags: row.tags ? row.tags.split(",") : [],
-      // ... map other fields
-    }));
+  async importFromCSVUpsert(
+    csvFile: Express.Multer.File,
+    imageFiles?: Express.Multer.File[],
+  ): Promise<any[]> {
+    console.log("[CSV IMPORT] Starting import...");
 
-    await prisma.collectionItem.createMany({ data: items });
-    return items;
+    try {
+      const csvText = csvFile.buffer.toString("utf-8");
+
+      return new Promise((resolve, reject) => {
+        Papa.parse(csvText, {
+          header: true,
+          skipEmptyLines: true,
+          transformHeader: (header) => header.trim(),
+          complete: async (results) => {
+            try {
+              console.log("[CSV IMPORT] Parsed rows:", results.data.length);
+
+              // ════════════════════════════════════════════════════════════════
+              // UPSERT LOGIC - Insert new or update existing items
+              // ════════════════════════════════════════════════════════════════
+              let newCount = 0;
+              let updatedCount = 0;
+              const processedItems: any[] = [];
+
+              for (const row of results.data as CSVRow[]) {
+                const externalId = row.id?.trim() || uuidv4();
+                const title = row.title?.trim() || "Untitled";
+                const artist = row.artist?.trim() || null;
+                const year = row.year ? parseInt(row.year) : null;
+                const imageUrl = row.imageUrl?.trim() || null;
+                const description = row.description?.trim() || null;
+                const department = row.department?.trim() || null;
+                const culture = row.culture?.trim() || null;
+                const classification =
+                  row.classification?.trim() || department || "General";
+                const medium = row.medium?.trim() || description || "Unknown";
+                const dimensions = row.dimensions?.trim() || "Unknown";
+                const credit = row.credit?.trim() || "Custom CSV Import";
+
+                // Parse tags
+                const tagsList = row.tags
+                  ? row.tags
+                      .split(/[,;]/)
+                      .map((t: string) => t.trim())
+                      .filter(Boolean)
+                  : [];
+
+                // Create metadata object
+                const metadata = {
+                  objectID: parseInt(externalId.replace(/\D/g, "")) || 0,
+                  department: department || "Unknown",
+                  title: title,
+                  culture: culture || "Unknown",
+                  medium: medium,
+                  classification: classification,
+                  artistDisplayName: artist || "Unknown Artist",
+                  artistDisplayBio: artist
+                    ? `${artist} (${culture || "Unknown"})`
+                    : "",
+                  artistNationality: culture || "Unknown",
+                  objectDate: year ? year.toString() : "Unknown",
+                  objectBeginDate: year || 0,
+                  objectEndDate: year || 0,
+                  period: year && year < 1900 ? "Historical" : "Modern",
+                  dimensions: dimensions,
+                  creditLine: credit,
+                  objectURL: imageUrl || "",
+                  primaryImage: imageUrl || "",
+                  additionalImages: [],
+                  isPublicDomain: true,
+                  tags: tagsList.map((tag: string) => ({
+                    term: tag,
+                    AAT_URL: "",
+                    Wikidata_URL: "",
+                  })),
+                  importSource: "csv",
+                  importDate: new Date().toISOString(),
+                };
+
+                // Check if item already exists
+                const existing = await prisma.collectionItem.findUnique({
+                  where: { externalId },
+                });
+
+                if (existing) {
+                  // UPDATE existing item
+                  console.log(
+                    "[CSV IMPORT] Updating existing item:",
+                    externalId,
+                  );
+                  const updated = await prisma.collectionItem.update({
+                    where: { externalId },
+                    data: {
+                      title,
+                      artist,
+                      year,
+                      imageUrl,
+                      description,
+                      metadata: JSON.stringify(metadata),
+                      updatedAt: new Date(),
+                    },
+                  });
+                  processedItems.push(updated);
+                  updatedCount++;
+                } else {
+                  // INSERT new item
+                  console.log("[CSV IMPORT] Creating new item:", externalId);
+                  const created = await prisma.collectionItem.create({
+                    data: {
+                      id: uuidv4(),
+                      museumId: "custom",
+                      externalId,
+                      title,
+                      artist,
+                      year,
+                      imageUrl,
+                      description,
+                      aiKeywords: tagsList.join(", "),
+                      additionalImages: null,
+                      metadata: JSON.stringify(metadata),
+                      createdAt: new Date(),
+                      updatedAt: new Date(),
+                    },
+                  });
+                  processedItems.push(created);
+                  newCount++;
+                }
+              }
+
+              console.log(
+                "[CSV IMPORT] Success! New:",
+                newCount,
+                "Updated:",
+                updatedCount,
+              );
+              resolve(processedItems);
+            } catch (error) {
+              console.error("[CSV IMPORT] Error processing CSV:", error);
+              reject(error);
+            }
+          },
+          error: (error: { message: any; }) => {
+            console.error("[CSV IMPORT] Papa parse error:", error);
+            reject(new Error(`CSV parsing failed: ${error.message}`));
+          },
+        });
+      });
+    } catch (error) {
+      console.error("[CSV IMPORT] Top-level error:", error);
+      throw error;
+    }
   }
 }
