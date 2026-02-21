@@ -2,6 +2,12 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";                // ← add this
 import collectionRoutes from "./routes/collection.routes.js";
+import path from "path";
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const app = express();
 
@@ -21,11 +27,15 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Serve uploaded images statically
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
 app.use("/api", collectionRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "TEMA Collections API running" });
 });
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

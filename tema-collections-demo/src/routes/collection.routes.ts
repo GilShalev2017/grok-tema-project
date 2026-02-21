@@ -7,12 +7,16 @@ import {
   generateGoogleAuthUrl,
   exchangeCodeForTokens,
 } from "../lib/google-auth";
+import * as fs from "fs";
+import * as path from "path";
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const router = Router();
 const service = new CollectionService();
-
-// Configure multer for file uploads
-const upload = multer({ storage: multer.memoryStorage() });
 
 router.post("/import/met", async (req, res) => {
   try {
@@ -77,47 +81,6 @@ router.get("/departments", async (_req, res) => {
   }
 });
 
-router.post("/import/csv", upload.single("csv"), async (req, res) => {
-  try {
-    const csvFile = req.file;
-    console.log("[CSV IMPORT ROUTE] File received:", {
-      filename: csvFile?.originalname,
-      size: csvFile?.size,
-    });
-
-    if (!csvFile) {
-      return res.status(400).json({ error: "No CSV file uploaded" });
-    }
-
-    const items = await service.importFromCSVUpsert(csvFile);
-
-    // Calculate actual stats from logs or parse result
-    // For now, assume all are new (you can enhance this)
-    console.log(
-      "[CSV IMPORT ROUTE] Success! Processed:",
-      items.length,
-      "items",
-    );
-
-    res.json({
-      success: true,
-      items,
-      stats: {
-        new: items.length, // You can track this more precisely if needed
-        updated: 0, // Count updates separately
-        removed: 0,
-      },
-      message: `Successfully processed ${items.length} artworks`,
-    });
-  } catch (err: any) {
-    console.error("[CSV IMPORT ROUTE] Error:", err);
-    res.status(500).json({
-      error: "CSV import failed",
-      message: err.message || "Unknown error",
-    });
-  }
-});
-
 router.get("/drive/auth", async (req, res) => {
   // Implement Google OAuth flow
   const authUrl = generateGoogleAuthUrl();
@@ -157,4 +120,109 @@ router.get("/drive/callback", async (req, res) => {
   }
 });
 
+
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// MULTER CONFIGURATION — Handles both CSV and Images
+// ════════════════════════════════════════════════════════════════════════════
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, "../../uploads/artworks");
+    // Create directory if it doesn't exist
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+      console.log("[MULTER] Created upload directory:", uploadDir);
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    // Keep original filename for easier CSV matching
+    cb(null, file.originalname);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB per file
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept CSV and common image formats
+    if (file.fieldname === "csv") {
+      if (file.mimetype === "text/csv" || file.originalname.endsWith(".csv")) {
+        cb(null, true);
+      } else {
+        cb(new Error("Only CSV files are allowed for the csv field"));
+      }
+    } else if (file.fieldname === "images") {
+      const allowedMimes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+      if (allowedMimes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error("Only image files (jpg, png, gif, webp) are allowed"));
+      }
+    } else {
+      cb(new Error("Unexpected field"));
+    }
+  },
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// CSV IMPORT ROUTE — Handles BOTH scenarios automatically
+// ════════════════════════════════════════════════════════════════════════════
+
+router.post(
+  "/import/csv",
+  upload.fields([
+    { name: "csv", maxCount: 1 },
+    { name: "images", maxCount: 100 }, // Allow up to 100 images
+  ]),
+  async (req, res) => {
+    try {
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+      const csvFile = files["csv"]?.[0];
+      const imageFiles = files["images"];
+
+      console.log("[CSV IMPORT ROUTE] CSV file:", csvFile?.originalname);
+      console.log("[CSV IMPORT ROUTE] Image files:", imageFiles?.length || 0);
+
+      if (!csvFile) {
+        console.error("[CSV IMPORT ROUTE] No CSV file in request");
+        return res.status(400).json({ error: "No CSV file uploaded" });
+      }
+
+      // Pass both CSV and images to service
+      // Service will automatically detect if images are needed
+      const result = await service.importFromCSVUpsert(csvFile, imageFiles);
+
+      console.log(
+        "[CSV IMPORT ROUTE] Success! New:",
+        result.newCount,
+        "Updated:",
+        result.updatedCount
+      );
+
+      res.json({
+        success: true,
+        items: result.items,
+        stats: {
+          new: result.newCount,
+          updated: result.updatedCount,
+          removed: 0,
+        },
+        message: `Successfully processed ${result.items.length} artworks (${result.newCount} new, ${result.updatedCount} updated)`,
+      });
+    } catch (err: any) {
+      console.error("[CSV IMPORT ROUTE] Error:", err);
+      console.error("[CSV IMPORT ROUTE] Stack:", err.stack);
+
+      res.status(500).json({
+        error: "CSV import failed",
+        message: err.message || "Unknown error occurred",
+      });
+    }
+  }
+);
 export default router;

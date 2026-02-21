@@ -8,6 +8,7 @@ import Papa from "papaparse";
 import { v4 as uuidv4 } from "uuid";
 // Singleton Prisma
 import prisma from "../lib/prisma";
+import * as fs from "fs";
 
 // Caches
 const metCache = new NodeCache({ stdTTL: 3600, checkperiod: 300 }); // 1 hour for Met objects
@@ -17,7 +18,6 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 console.log("[SERVICE] File loaded successfully");
 
-// Interface for CSV row data
 interface CSVRow {
   id?: string;
   title?: string;
@@ -34,27 +34,7 @@ interface CSVRow {
   tags?: string;
 }
 
-// Helper function to parse CSV data
-// function parseCSV(csvText: string): any[] {
-//   const result = Papa.parse(csvText, {
-//     header: true,
-//     skipEmptyLines: true,
-//     transformHeader: (header) => header.trim(),
-//     transform: (value) => value.trim(),
-//   });
-
-//   if (result.errors.length > 0) {
-//     console.error("[CSV PARSE] Errors:", result.errors);
-//     throw new Error(
-//       `CSV parsing failed: ${result.errors.map((e) => e.message).join(", ")}`,
-//     );
-//   }
-
-//   return result.data;
-// }
-
 export class CollectionService {
-  //Gemini 2.5 Flash
   async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
     const normalizedSearchTerm = searchTerm.trim() || "*";
 
@@ -331,8 +311,6 @@ export class CollectionService {
     };
   }
 
-  // ==================== CSV IMPORT ====================
-
   async getDepartments() {
     const cacheKey = "met-departments";
 
@@ -360,6 +338,7 @@ export class CollectionService {
     }
   }
 
+  // ==================== CSV IMPORT ====================
   /**
    * Import artworks from CSV file
    * @param csvFile - Multer file object containing CSV data
@@ -374,7 +353,7 @@ export class CollectionService {
 
     try {
       // Step 1: Convert buffer to string
-      const csvText = csvFile.buffer.toString("utf-8");
+      const csvText = fs.readFileSync(csvFile.path, "utf-8");
       console.log("[CSV IMPORT] CSV text preview:", csvText.substring(0, 200));
 
       // Step 2: Parse CSV using papaparse
@@ -482,11 +461,36 @@ export class CollectionService {
   async importFromCSVUpsert(
     csvFile: Express.Multer.File,
     imageFiles?: Express.Multer.File[],
-  ): Promise<any[]> {
+  ): Promise<{ items: any[]; newCount: number; updatedCount: number }> {
     console.log("[CSV IMPORT] Starting import...");
+    console.log("[CSV IMPORT] CSV file path:", csvFile.path); // ← Now has path, not buffer
+    console.log("[CSV IMPORT] Images provided:", imageFiles?.length || 0);
 
     try {
-      const csvText = csvFile.buffer.toString("utf-8");
+      // ════════════════════════════════════════════════════════════════════
+      // READ CSV FILE FROM DISK (not from buffer)
+      // ════════════════════════════════════════════════════════════════════
+      const csvText = fs.readFileSync(csvFile.path, "utf-8"); // ← CHANGED!
+      console.log("[CSV IMPORT] CSV size:", csvText.length, "characters");
+
+      // ════════════════════════════════════════════════════════════════════
+      // Create image filename → URL mapping
+      // ════════════════════════════════════════════════════════════════════
+      const imageUrlMap = new Map<string, string>();
+
+      if (imageFiles && imageFiles.length > 0) {
+        imageFiles.forEach((file) => {
+          // Images are saved to /uploads/artworks/
+          const publicUrl = `/uploads/artworks/${file.filename}`;
+          imageUrlMap.set(file.originalname, publicUrl);
+          console.log(
+            "[CSV IMPORT] Mapped image:",
+            file.originalname,
+            "→",
+            publicUrl,
+          );
+        });
+      }
 
       return new Promise((resolve, reject) => {
         Papa.parse(csvText, {
@@ -497,9 +501,6 @@ export class CollectionService {
             try {
               console.log("[CSV IMPORT] Parsed rows:", results.data.length);
 
-              // ════════════════════════════════════════════════════════════════
-              // UPSERT LOGIC - Insert new or update existing items
-              // ════════════════════════════════════════════════════════════════
               let newCount = 0;
               let updatedCount = 0;
               const processedItems: any[] = [];
@@ -509,7 +510,6 @@ export class CollectionService {
                 const title = row.title?.trim() || "Untitled";
                 const artist = row.artist?.trim() || null;
                 const year = row.year ? parseInt(row.year) : null;
-                const imageUrl = row.imageUrl?.trim() || null;
                 const description = row.description?.trim() || null;
                 const department = row.department?.trim() || null;
                 const culture = row.culture?.trim() || null;
@@ -527,7 +527,40 @@ export class CollectionService {
                       .filter(Boolean)
                   : [];
 
-                // Create metadata object
+                // ══════════════════════════════════════════════════════════
+                // SMART IMAGE URL HANDLING
+                // ══════════════════════════════════════════════════════════
+                let finalImageUrl = row.imageUrl?.trim() || null;
+
+                if (finalImageUrl) {
+                  if (finalImageUrl.startsWith("http")) {
+                    // Online URL - use as-is
+                    console.log("[CSV IMPORT] Using online URL for:", title);
+                  } else {
+                    // Local filename - find uploaded image
+                    const uploadedImageUrl = imageUrlMap.get(finalImageUrl);
+
+                    if (uploadedImageUrl) {
+                      finalImageUrl = uploadedImageUrl;
+                      console.log(
+                        "[CSV IMPORT] Using uploaded image for:",
+                        title,
+                        "→",
+                        finalImageUrl,
+                      );
+                    } else {
+                      console.warn(
+                        "[CSV IMPORT] Image not found for:",
+                        title,
+                        "- expected:",
+                        finalImageUrl,
+                      );
+                      finalImageUrl = null;
+                    }
+                  }
+                }
+
+                // Create metadata
                 const metadata = {
                   objectID: parseInt(externalId.replace(/\D/g, "")) || 0,
                   department: department || "Unknown",
@@ -546,8 +579,8 @@ export class CollectionService {
                   period: year && year < 1900 ? "Historical" : "Modern",
                   dimensions: dimensions,
                   creditLine: credit,
-                  objectURL: imageUrl || "",
-                  primaryImage: imageUrl || "",
+                  objectURL: finalImageUrl || "",
+                  primaryImage: finalImageUrl || "",
                   additionalImages: [],
                   isPublicDomain: true,
                   tags: tagsList.map((tag: string) => ({
@@ -559,34 +592,37 @@ export class CollectionService {
                   importDate: new Date().toISOString(),
                 };
 
-                // Check if item already exists
+                // Check if exists
                 const existing = await prisma.collectionItem.findUnique({
                   where: { externalId },
                 });
 
                 if (existing) {
-                  // UPDATE existing item
+                  // UPDATE
                   console.log(
                     "[CSV IMPORT] Updating existing item:",
                     externalId,
                   );
+
                   const updated = await prisma.collectionItem.update({
                     where: { externalId },
                     data: {
                       title,
                       artist,
                       year,
-                      imageUrl,
+                      imageUrl: finalImageUrl,
                       description,
                       metadata: JSON.stringify(metadata),
                       updatedAt: new Date(),
                     },
                   });
+
                   processedItems.push(updated);
                   updatedCount++;
                 } else {
-                  // INSERT new item
+                  // INSERT
                   console.log("[CSV IMPORT] Creating new item:", externalId);
+
                   const created = await prisma.collectionItem.create({
                     data: {
                       id: uuidv4(),
@@ -595,7 +631,7 @@ export class CollectionService {
                       title,
                       artist,
                       year,
-                      imageUrl,
+                      imageUrl: finalImageUrl,
                       description,
                       aiKeywords: tagsList.join(", "),
                       additionalImages: null,
@@ -604,6 +640,7 @@ export class CollectionService {
                       updatedAt: new Date(),
                     },
                   });
+
                   processedItems.push(created);
                   newCount++;
                 }
@@ -615,13 +652,28 @@ export class CollectionService {
                 "Updated:",
                 updatedCount,
               );
-              resolve(processedItems);
+
+              // ════════════════════════════════════════════════════════════
+              // CLEANUP: Delete uploaded CSV file after processing
+              // ════════════════════════════════════════════════════════════
+              try {
+                fs.unlinkSync(csvFile.path);
+                console.log("[CSV IMPORT] Cleaned up CSV file");
+              } catch (err) {
+                console.warn("[CSV IMPORT] Could not delete CSV:", err);
+              }
+
+              resolve({
+                items: processedItems,
+                newCount,
+                updatedCount,
+              });
             } catch (error) {
               console.error("[CSV IMPORT] Error processing CSV:", error);
               reject(error);
             }
           },
-          error: (error: { message: any; }) => {
+          error: (error: { message: any }) => {
             console.error("[CSV IMPORT] Papa parse error:", error);
             reject(new Error(`CSV parsing failed: ${error.message}`));
           },
