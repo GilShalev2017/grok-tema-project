@@ -9,6 +9,8 @@ import { v4 as uuidv4 } from "uuid";
 // Singleton Prisma
 import prisma from "../lib/prisma";
 import * as fs from "fs";
+import { getOAuth2Client } from "../lib/google-auth";
+import { google } from "googleapis";
 
 // Caches
 const metCache = new NodeCache({ stdTTL: 3600, checkperiod: 300 }); // 1 hour for Met objects
@@ -681,6 +683,82 @@ export class CollectionService {
       });
     } catch (error) {
       console.error("[CSV IMPORT] Top-level error:", error);
+      throw error;
+    }
+  }
+
+  // ==================== GOOGLE DRIVE IMPORT ====================
+
+  //No Upsert but works!
+  async importFromDrive(folderId: string, accessToken: string) {
+    // 1. Validate Folder ID
+    if (!folderId || folderId === "undefined" || folderId === "null") {
+      throw new Error("Invalid Folder ID received by backend.");
+    }
+
+    console.log(">>> [DRIVE SERVICE] Initializing with Folder ID:", folderId);
+
+    // 2. Setup Google Auth Client
+    const auth = getOAuth2Client();
+    auth.setCredentials({ access_token: accessToken });
+
+    const drive = google.drive({ version: "v3", auth });
+
+    try {
+      // 3. List all files inside the specified folder
+      const response = await drive.files.list({
+        q: `'${folderId}' in parents and trashed = false`,
+        fields: "files(id, name, mimeType, webContentLink, thumbnailLink)",
+      });
+
+      const files = response.data.files || [];
+      console.log(
+        `>>> [DRIVE SERVICE] Found ${files.length} files in Google Drive.`,
+      );
+
+      const results = [];
+      for (const file of files) {
+        // Only process image files (jpg, png, etc.)
+        if (file.mimeType?.startsWith("image/")) {
+          /**
+           * FIXING THE IMAGE URL:
+           * We change the download link to a high-quality thumbnail preview link.
+           * The 'sz=w1000' at the end ensures we get a high-resolution version.
+           */
+          const directImageUrl = `https://lh3.googleusercontent.com/d/${file.id}=w1000`;
+
+          const newItem = await prisma.collectionItem.create({
+            data: {
+              title: file.name || "Untitled",
+              imageUrl: directImageUrl, // The fixed preview URL
+              externalId: file.id!,
+              // Note: 'source' is removed to prevent Prisma 'known properties' error
+            },
+          });
+          results.push(newItem);
+        }
+      }
+
+      return {
+        success: true,
+        items: results,
+        stats: { new: results.length, updated: 0 },
+      };
+    } catch (error: any) {
+      console.error(">>> [DRIVE SERVICE] API ERROR:", error.message);
+
+      if (error.code === 404) {
+        throw new Error(
+          `Folder ID '${folderId}' was not found. Please ensure the folder is shared.`,
+        );
+      }
+
+      if (error.code === 401 || error.code === 403) {
+        throw new Error(
+          "Google Authentication expired or invalid permissions. Please reconnect.",
+        );
+      }
+
       throw error;
     }
   }

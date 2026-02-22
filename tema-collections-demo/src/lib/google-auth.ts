@@ -1,37 +1,38 @@
-import { google } from 'googleapis';
+import { google } from "googleapis";
 
 const OAuth2 = google.auth.OAuth2;
 
-const oauth2Client = new OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/collections/drive/callback'
-);
+// This function creates a fresh client for every request to avoid state issues
+export function getOAuth2Client() {
+  return new OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI, // Ensure this is http://localhost:5173
+  );
+}
 
 const SCOPES = [
-  'https://www.googleapis.com/auth/drive.readonly',
-  'https://www.googleapis.com/auth/drive.metadata.readonly'
+  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/drive.metadata.readonly",
 ];
 
 export function generateGoogleAuthUrl(): string {
-  return oauth2Client.generateAuthUrl({
-    access_type: 'offline',
+  const client = getOAuth2Client();
+  return client.generateAuthUrl({
+    access_type: "offline",
     scope: SCOPES,
-    prompt: 'consent'
+    prompt: "consent",
   });
 }
 
 export async function exchangeCodeForTokens(code: string) {
+  const client = getOAuth2Client();
   try {
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
+    // This is the critical step where the 'code' becomes a real Token
+    const { tokens } = await client.getToken(code);
     return tokens;
   } catch (error) {
-    console.error('Error exchanging code for tokens:', error);
-    throw new Error('Failed to exchange authorization code for tokens');
+    console.error("Error exchanging code for tokens:", error);
+    throw new Error("Failed to exchange authorization code for tokens");
   }
-}
-
-export function getOAuth2Client() {
-  return oauth2Client;
 }
