@@ -29,50 +29,62 @@ router.get("/import/drive/auth", (req, res) => {
 - Redirect URI: Configured in Google Cloud Console
 - State parameter: Optional folder ID passing
 
-### **2. User Authorization**
+### **2. User Authorization - Client-Side Flow**
 ```
-User Flow:
-1. User clicks "Import from Google Drive"
-2. Frontend calls GET /api/import/drive/auth
-3. Receives authorization URL
-4. User is redirected to Google consent screen
-5. User grants Drive access permissions
-6. Google redirects back with authorization code
+Real OAuth Flow (Client-Side Pattern):
+1. Client calls GET /api/import/drive/auth → Gets OAuth URL
+2. User authorizes in popup/new tab
+3. Google redirects to client with auth code
+4. Client gets auth code and calls POST /api/import/drive
+5. Server exchanges code for token and imports files
+
+Note: This is NOT the traditional server callback flow.
+The client handles the OAuth callback, not the server.
 ```
 
-### **3. Callback Handling**
+### **3. Authorization Code Processing**
 ```typescript
-// Endpoint: GET /api/import/drive/callback
-// File: src/routes/collection.routes.ts (lines 171-187)
+// Endpoint: POST /api/import/drive
+// File: src/routes/collection.routes.ts (lines 209-235)
 
 /**
- * Handles OAuth callback from Google
- * Exchanges authorization code for access token
- * Optionally performs automatic import
+ * Handles Google Drive import with OAuth authorization code
+ * Client sends auth code obtained from OAuth flow
+ * Server exchanges code for access token and imports files
  */
-router.get("/import/drive/callback", async (req, res) => {
-  const { code, state } = req.query;
-  
+router.post("/import/drive", async (req, res) => {
   try {
-    const tokens = await exchangeCodeForTokens(code as string);
-    const result = await service.importFromDrive(
-      state as string,  // Folder ID from state
-      tokens.access_token!
-    );
-    
-    // Redirect back to frontend with success
-    res.redirect(`${process.env.FRONTEND_URL}/import?status=success`);
-  } catch (error) {
-    res.redirect(`${process.env.FRONTEND_URL}/import?status=error`);
+    // Client sends 'accessToken' but it's actually the auth code
+    const { folderId, accessToken: authCode } = req.body;
+
+    if (!folderId || !authCode) {
+      return res.status(400).json({ error: "Missing folderId or code" });
+    }
+
+    // Exchange authorization code for real access token
+    const tokens = await exchangeCodeForTokens(authCode);
+
+    if (!tokens.access_token) {
+      throw new Error("Google failed to provide an access token.");
+    }
+
+    // Import files using the real access token
+    const result = await service.importFromDrive(folderId, tokens.access_token);
+
+    res.json(result);
+  } catch (err: any) {
+    console.error(">>> [ROUTE] Import failed:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 ```
 
 **Key Features:**
-- **Code Exchange**: Converts auth code to access token
-- **State Parameter**: Passes folder ID through OAuth flow
-- **Automatic Import**: Can trigger import immediately after auth
-- **Error Handling**: Graceful redirect on failure
+- **Client-Side OAuth**: Client handles OAuth callback, not server
+- **Code Exchange**: Converts auth code to access token on server
+- **Direct Import**: Server imports immediately after token exchange
+- **Error Handling**: Returns JSON responses instead of redirects
+- **No Server Callback**: Eliminates need for FRONTEND_URL environment variable
 
 ### **4. Token Exchange Implementation**
 ```typescript
@@ -192,7 +204,8 @@ Parameters:
 const oauth2Client = new google.auth.OAuth2({
   clientId: process.env.GOOGLE_CLIENT_ID,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  redirectUri: `${process.env.FRONTEND_URL}/auth/callback`,
+  // Note: redirectUri is not needed for client-side OAuth flow
+  // The client handles the OAuth callback directly
 });
 ```
 
@@ -302,13 +315,16 @@ Required Settings:
 1. Create new project
 2. Enable Google Drive API
 3. Configure OAuth 2.0 Client
-4. Set authorized redirect URIs
+4. Set authorized JavaScript origins (for client-side OAuth)
 5. Add application homepage
 6. Verify domain (production)
 
-Redirect URI Format:
-{FRONTEND_URL}/auth/callback
-Example: http://localhost:5173/auth/callback
+Note: For client-side OAuth flow, you don't need to configure
+redirect URIs since the client handles the callback directly.
+
+JavaScript Origins Format:
+http://localhost:5173
+https://yourdomain.com
 ```
 
 ### **2. Environment Variables**
@@ -317,15 +333,16 @@ Example: http://localhost:5173/auth/callback
 GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 
-# Application URLs
-FRONTEND_URL=http://localhost:5173
+# API Configuration
+PORT=3001
 NODE_ENV=development
 ```
 
 ### **3. Production Considerations**
 ```env
 # Production Environment
-FRONTEND_URL=https://yourdomain.com
+NODE_ENV=production
+PORT=3001
 GOOGLE_CLIENT_ID=production_client_id
 GOOGLE_CLIENT_SECRET=production_client_secret
 

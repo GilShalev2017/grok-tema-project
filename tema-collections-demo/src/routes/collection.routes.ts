@@ -197,38 +197,6 @@ router.get("/import/drive/auth", (req, res) => {
   res.json({ url });
 });
 
-/**
- * GET /import/drive/callback
- *
- * Google Drive OAuth 2.0 callback handler.
- * Completes the OAuth flow and automatically imports files from the specified folder.
- *
- * OAuth Flow:
- * 1. Exchange authorization code for access tokens
- * 2. Use access token to import files from specified folder ID (passed via state)
- * 3. Redirect user back to frontend with success/error status
- *
- * @query { code: string } Authorization code from Google
- * @query { state?: string } Folder ID to import from (optional)
- * @redirect {frontend_url} With status parameter (success/error)
- */
-router.get("/import/drive/callback", async (req, res) => {
-  const { code, state } = req.query; // 'state' can be used to pass the collectionId
-
-  try {
-    const tokens = await exchangeCodeForTokens(code as string);
-    // Use the tokens to crawl the drive (Service logic below)
-    const result = await service.importFromDrive(
-      state as string,
-      tokens.access_token!,
-    );
-
-    // Redirect back to frontend with success
-    res.redirect(`${process.env.FRONTEND_URL}/import?status=success`);
-  } catch (error) {
-    res.redirect(`${process.env.FRONTEND_URL}/import?status=error`);
-  }
-});
 
 /**
  * POST /import/drive
