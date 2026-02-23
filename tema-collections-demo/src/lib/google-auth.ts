@@ -7,7 +7,7 @@ export function getOAuth2Client() {
   return new OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI, // Ensure this is http://localhost:5173
+    process.env.GOOGLE_REDIRECT_URI, 
   );
 }
 

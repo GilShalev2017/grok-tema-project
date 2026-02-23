@@ -81,7 +81,6 @@ router.get("/departments", async (_req, res) => {
   }
 });
 
-
 // 1. Redirect user to Google
 router.get("/import/drive/auth", (req, res) => {
   const url = generateGoogleAuthUrl();
@@ -91,12 +90,15 @@ router.get("/import/drive/auth", (req, res) => {
 // 2. Handle the callback and perform the import
 router.get("/import/drive/callback", async (req, res) => {
   const { code, state } = req.query; // 'state' can be used to pass the collectionId
-  
+
   try {
     const tokens = await exchangeCodeForTokens(code as string);
     // Use the tokens to crawl the drive (Service logic below)
-    const result = await service.importFromDrive(state as string, tokens.access_token!);
-    
+    const result = await service.importFromDrive(
+      state as string,
+      tokens.access_token!,
+    );
+
     // Redirect back to frontend with success
     res.redirect(`${process.env.FRONTEND_URL}/import?status=success`);
   } catch (error) {
@@ -104,50 +106,11 @@ router.get("/import/drive/callback", async (req, res) => {
   }
 });
 
-router.get("/drive/auth", async (req, res) => {
-  // Implement Google OAuth flow
-  const authUrl = generateGoogleAuthUrl();
-  res.redirect(authUrl);
-});
-
-router.get("/drive/callback", async (req, res) => {
-  try {
-    const { code, error } = req.query;
-
-    if (error) {
-      console.error("[OAUTH] Error from Google:", error);
-      return res
-        .status(400)
-        .json({ error: "OAuth authorization failed", details: error });
-    }
-
-    if (!code) {
-      return res.status(400).json({ error: "No authorization code provided" });
-    }
-
-    const tokens = await exchangeCodeForTokens(code as string);
-
-    // TODO: Store tokens securely (database, session, etc.)
-    console.log("[OAUTH] Successfully obtained tokens");
-
-    // Redirect back to frontend with success
-    res.redirect(
-      `${process.env.FRONTEND_URL || "http://localhost:5173"}?auth=success`,
-    );
-  } catch (err: any) {
-    console.error("[OAUTH] Callback error:", err);
-    res.status(500).json({
-      error: "OAuth callback failed",
-      message: err.message,
-    });
-  }
-});
-
 router.post("/import/drive", async (req, res) => {
   try {
-    // Note: The frontend sends 'accessToken' in the body, 
+    // Note: The frontend sends 'accessToken' in the body,
     // but at this stage, it is actually the 'authorization code'.
-    const { folderId, accessToken: authCode } = req.body; 
+    const { folderId, accessToken: authCode } = req.body;
 
     if (!folderId || !authCode) {
       return res.status(400).json({ error: "Missing folderId or code" });
@@ -164,14 +127,13 @@ router.post("/import/drive", async (req, res) => {
 
     // 2. Now pass the REAL access_token to the service
     const result = await service.importFromDrive(folderId, tokens.access_token);
-    
+
     res.json(result);
   } catch (err: any) {
     console.error(">>> [ROUTE] Import failed:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
-
 
 // ════════════════════════════════════════════════════════════════════════════
 // MULTER CONFIGURATION — Handles both CSV and Images
@@ -207,7 +169,13 @@ const upload = multer({
         cb(new Error("Only CSV files are allowed for the csv field"));
       }
     } else if (file.fieldname === "images") {
-      const allowedMimes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+      const allowedMimes = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+      ];
       if (allowedMimes.includes(file.mimetype)) {
         cb(null, true);
       } else {
@@ -251,7 +219,7 @@ router.post(
         "[CSV IMPORT ROUTE] Success! New:",
         result.newCount,
         "Updated:",
-        result.updatedCount
+        result.updatedCount,
       );
 
       res.json({
@@ -273,6 +241,71 @@ router.post(
         message: err.message || "Unknown error occurred",
       });
     }
-  }
+  },
 );
+
+router.delete("/clear", async (req, res) => {
+  try {
+    console.log("[ROUTE] Received request to clear collection");
+    const result = await service.clearCollection();
+    res.json(result);
+  } catch (err: any) {
+    console.error("[ROUTE] Error in /clear:", err);
+    res.status(500).json({
+      error: "Clear failed",
+      message: err.message || "Unknown error",
+    });
+  }
+});
+
+router.delete("/items/:id", async (req, res) => {
+  try {
+    console.log("[ROUTE] Received request to delete artwork");
+    const { id } = req.params;
+    const result = await service.deleteArtwork(id);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: "Deletion failed", message: err.message });
+  }
+});
+
 export default router;
+
+// router.get("/drive/auth", async (req, res) => {
+//   // Implement Google OAuth flow
+//   const authUrl = generateGoogleAuthUrl();
+//   res.redirect(authUrl);
+// });
+
+// router.get("/drive/callback", async (req, res) => {
+//   try {
+//     const { code, error } = req.query;
+
+//     if (error) {
+//       console.error("[OAUTH] Error from Google:", error);
+//       return res
+//         .status(400)
+//         .json({ error: "OAuth authorization failed", details: error });
+//     }
+
+//     if (!code) {
+//       return res.status(400).json({ error: "No authorization code provided" });
+//     }
+
+//     const tokens = await exchangeCodeForTokens(code as string);
+
+//     // TODO: Store tokens securely (database, session, etc.)
+//     console.log("[OAUTH] Successfully obtained tokens");
+
+//     // Redirect back to frontend with success
+//     res.redirect(
+//       `${process.env.FRONTEND_URL || "http://localhost:5173"}?auth=success`,
+//     );
+//   } catch (err: any) {
+//     console.error("[OAUTH] Callback error:", err);
+//     res.status(500).json({
+//       error: "OAuth callback failed",
+//       message: err.message,
+//     });
+//   }
+// });

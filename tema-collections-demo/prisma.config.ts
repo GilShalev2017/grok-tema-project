@@ -1,4 +1,3 @@
-// prisma.config.ts
 import 'dotenv/config';  // loads .env file
 import { defineConfig, env } from 'prisma/config';
 

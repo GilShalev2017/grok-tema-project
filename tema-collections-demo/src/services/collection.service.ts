@@ -726,6 +726,7 @@ export class CollectionService {
            * The 'sz=w1000' at the end ensures we get a high-resolution version.
            */
           const directImageUrl = `https://lh3.googleusercontent.com/d/${file.id}=w1000`;
+          //const directImageUrl = `https://lh3.googleusercontent.com/d/${file.id}=w400`;
 
           const newItem = await prisma.collectionItem.create({
             data: {
@@ -760,6 +761,33 @@ export class CollectionService {
       }
 
       throw error;
+    }
+  }
+
+  async clearCollection() {
+    try {
+      const result = await prisma.collectionItem.deleteMany({});
+      console.log(`[SERVICE] Deleted ${result.count} items from collection.`);
+      return {
+        success: true,
+        count: result.count,
+        message: "Collection cleared successfully.",
+      };
+    } catch (error: any) {
+      console.error("[SERVICE] Error clearing collection:", error);
+      throw new Error("Failed to clear collection: " + error.message);
+    }
+  }
+
+  async deleteArtwork(id: string) {
+    try {
+      await prisma.collectionItem.delete({
+        where: { id },
+      });
+      return { success: true, message: "Artwork deleted successfully" };
+    } catch (error: any) {
+      console.error(`[SERVICE] Error deleting artwork ${id}:`, error);
+      throw new Error("Failed to delete artwork");
     }
   }
 }
