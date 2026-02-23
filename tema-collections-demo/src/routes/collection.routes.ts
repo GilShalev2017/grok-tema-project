@@ -1,7 +1,5 @@
 import { Router } from "express";
 import { CollectionService } from "../services/collection.service";
-import { PrismaClient } from "@prisma/client"; // ← add this
-import prisma from "../lib/prisma"; // adjus
 import multer from "multer";
 import {
   generateGoogleAuthUrl,
@@ -270,42 +268,3 @@ router.delete("/items/:id", async (req, res) => {
 });
 
 export default router;
-
-// router.get("/drive/auth", async (req, res) => {
-//   // Implement Google OAuth flow
-//   const authUrl = generateGoogleAuthUrl();
-//   res.redirect(authUrl);
-// });
-
-// router.get("/drive/callback", async (req, res) => {
-//   try {
-//     const { code, error } = req.query;
-
-//     if (error) {
-//       console.error("[OAUTH] Error from Google:", error);
-//       return res
-//         .status(400)
-//         .json({ error: "OAuth authorization failed", details: error });
-//     }
-
-//     if (!code) {
-//       return res.status(400).json({ error: "No authorization code provided" });
-//     }
-
-//     const tokens = await exchangeCodeForTokens(code as string);
-
-//     // TODO: Store tokens securely (database, session, etc.)
-//     console.log("[OAUTH] Successfully obtained tokens");
-
-//     // Redirect back to frontend with success
-//     res.redirect(
-//       `${process.env.FRONTEND_URL || "http://localhost:5173"}?auth=success`,
-//     );
-//   } catch (err: any) {
-//     console.error("[OAUTH] Callback error:", err);
-//     res.status(500).json({
-//       error: "OAuth callback failed",
-//       message: err.message,
-//     });
-//   }
-// });
