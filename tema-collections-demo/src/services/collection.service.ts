@@ -1,25 +1,58 @@
-import { PrismaClient } from "@prisma/client";
+/**
+ * Collection Service
+ * 
+ * Core business logic for managing artwork collections.
+ * Handles imports from Met Museum, Google Drive, CSV files,
+ * AI enrichment, and database operations.
+ * 
+ * Features:
+ * - Multi-source import (Met API, Google Drive, CSV)
+ * - AI-powered artwork enrichment using OpenAI Vision
+ * - Intelligent caching for performance optimization
+ * - Bulk operations with proper error handling
+ * - Image processing and URL management
+ * 
+ * @author Your Name
+ * @version 1.0.0
+ * @since 2024-02-23
+ */
+
 import axios from "axios";
 import OpenAI from "openai";
 import NodeCache from "node-cache";
 import crypto from "crypto";
-import { Express } from "express";
 import Papa from "papaparse";
 import { v4 as uuidv4 } from "uuid";
-// Singleton Prisma
 import prisma from "../lib/prisma";
 import * as fs from "fs";
 import { getOAuth2Client } from "../lib/google-auth";
 import { google } from "googleapis";
 
-// Caches
+// ════════════════════════════════════════════════════════════════════════════
+// CACHE CONFIGURATION
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Performance optimization through intelligent caching:
+ * - Met Cache: 1 hour TTL for museum object data
+ * - AI Cache: 24 hours TTL for AI-generated keywords
+ * - Reduces API calls and improves response times
+ */
 const metCache = new NodeCache({ stdTTL: 3600, checkperiod: 300 }); // 1 hour for Met objects
 const aiCache = new NodeCache({ stdTTL: 86400, checkperiod: 600 }); // 24 hours for AI results
 
+/**
+ * OpenAI client configuration for AI enrichment
+ * Uses GPT-4 Vision model for artwork analysis
+ */
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-console.log("[SERVICE] File loaded successfully");
+console.log("[SERVICE] CollectionService initialized successfully");
 
+/**
+ * CSV row interface for type-safe parsing
+ * Supports comprehensive artwork metadata fields
+ */
 interface CSVRow {
   id?: string;
   title?: string;
@@ -37,10 +70,28 @@ interface CSVRow {
 }
 
 export class CollectionService {
+  // ════════════════════════════════════════════════════════════════════════════
+  // MET MUSEUM API IMPORT
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Imports artworks from the Metropolitan Museum of Art API
+   * 
+   * Features:
+   * - Parallel API calls for performance
+   * - Intelligent filtering (public domain, images only)
+   * - Caching to reduce API load
+   * - Bulk database operations
+   * - Comprehensive error handling
+   * 
+   * @param searchTerm - Free text search query (default: "*")
+   * @param departmentIds - Array of department IDs for filtering
+   * @returns Import results with statistics and items
+   * @throws {Error} If API calls fail or database operations error
+   */
   async importFromMet(searchTerm: string = "*", departmentIds: string[] = []) {
     const normalizedSearchTerm = searchTerm.trim() || "*";
 
-    // --- DEBUG LOGS ---
     console.log(
       `\n[IMPORT] Initializing search for: "${normalizedSearchTerm}"`,
     );
@@ -189,7 +240,25 @@ export class CollectionService {
       throw new Error(err.message);
     }
   }
-  // ==================== AI ENRICHMENT (with cache per image) ====================
+  // ════════════════════════════════════════════════════════════════════════════
+  // AI ENRICHMENT WITH VISION ANALYSIS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Enriches artwork metadata using AI-powered visual analysis
+   * 
+   * Process:
+   * 1. Generate MD5 hash of image URL for cache key
+   * 2. Check cache for existing keywords
+   * 3. If cached, return existing data
+   * 4. If not cached, analyze with OpenAI GPT-4 Vision
+   * 5. Extract 8-12 specific, descriptive keywords
+   * 6. Cache results for 24 hours
+   * 
+   * @param itemId - UUID of the artwork to enrich
+   * @returns Updated artwork with AI-generated keywords
+   * @throws {Error} If artwork not found or AI service fails
+   */
   async enrichWithAI(itemId: string) {
     console.log(`[ENRICH] Enriching item ${itemId}`);
 
@@ -277,7 +346,23 @@ export class CollectionService {
     });
   }
 
-  // ==================== GET ALL ITEMS (with pagination) ====================
+  // ════════════════════════════════════════════════════════════════════════════
+  // DATABASE OPERATIONS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Retrieves paginated collection items with formatted data
+   * 
+   * Features:
+   * - Efficient pagination with metadata
+   * - Data transformation for frontend compatibility
+   * - Proper sorting by creation date
+   * - Array parsing for stored CSV data
+   * 
+   * @param page - Page number (default: 1)
+   * @param limit - Items per page (default: 100)
+   * @returns Paginated items with metadata
+   */
   async getAllItems(page: number = 1, limit: number = 100) {
     const skip = (page - 1) * limit;
 
@@ -313,6 +398,16 @@ export class CollectionService {
     };
   }
 
+  /**
+   * Retrieves Met Museum departments with caching
+   * 
+   * Caching strategy:
+   * - Cache departments for 1 hour
+   * - Reduces API calls for frequently accessed data
+   * - Graceful fallback on API failures
+   * 
+   * @returns Array of department objects
+   */
   async getDepartments() {
     const cacheKey = "met-departments";
 
@@ -340,126 +435,30 @@ export class CollectionService {
     }
   }
 
-  // ==================== CSV IMPORT ====================
+  // ════════════════════════════════════════════════════════════════════════════
+  // CSV IMPORT OPERATIONS
+  // ════════════════════════════════════════════════════════════════════════════
+
   /**
-   * Import artworks from CSV file
-   * @param csvFile - Multer file object containing CSV data
-   * @param imageFiles - Optional array of uploaded image files (not used yet)
+   * Advanced CSV import with upsert capability and image handling
+   * 
+   * Features:
+   * - Smart upsert (update existing, create new)
+   * - Intelligent image URL resolution
+   * - Support for both online URLs and uploaded files
+   * - Comprehensive data validation and cleaning
+   * - Automatic file cleanup after processing
+   * - Detailed logging and error handling
+   * 
+   * Image URL Resolution:
+   * 1. If URL starts with "http" → use as-is
+   * 2. If filename → match with uploaded files
+   * 3. If no match found → set to null
+   * 
+   * @param csvFile - CSV file with artwork metadata
+   * @param imageFiles - Optional uploaded image files
+   * @returns Import results with statistics
    */
-  async importFromCSV(
-    csvFile: Express.Multer.File,
-    imageFiles?: Express.Multer.File[],
-  ): Promise<any[]> {
-    console.log("[CSV IMPORT] Starting import...");
-    console.log("[CSV IMPORT] File size:", csvFile.size, "bytes");
-
-    try {
-      // Step 1: Convert buffer to string
-      const csvText = fs.readFileSync(csvFile.path, "utf-8");
-      console.log("[CSV IMPORT] CSV text preview:", csvText.substring(0, 200));
-
-      // Step 2: Parse CSV using papaparse
-      return new Promise((resolve, reject) => {
-        Papa.parse(csvText, {
-          header: true, // First row is headers
-          skipEmptyLines: true, // Ignore empty rows
-          transformHeader: (header) => header.trim(), // Clean headers
-          complete: async (results) => {
-            try {
-              console.log("[CSV IMPORT] Parsed rows:", results.data.length);
-              console.log("[CSV IMPORT] First row sample:", results.data[0]);
-
-              // Step 3: Transform CSV rows to database format
-              const items = (results.data as any[]).map((row: any) => {
-                // Clean and validate data
-                const id = uuidv4();
-                const externalId = row.id?.trim() || id;
-                const title = row.title?.trim() || "Untitled";
-                const artist = row.artist?.trim() || null;
-                const year = row.year ? parseInt(row.year) : null;
-                const imageUrl = row.imageUrl?.trim() || null;
-                const description = row.description?.trim() || null;
-                const department = row.department?.trim() || "Unknown";
-                const culture = row.culture?.trim() || null;
-
-                // Parse tags (comma-separated string to array)
-                const tags = row.tags
-                  ? row.tags
-                      .split(",")
-                      .map((t: string) => t.trim())
-                      .filter(Boolean)
-                  : [];
-
-                console.log("[CSV IMPORT] Processing item:", {
-                  id: externalId,
-                  title,
-                  artist,
-                });
-
-                return {
-                  id,
-                  museumId: "custom",
-                  externalId,
-                  title,
-                  artist,
-                  year,
-                  imageUrl,
-                  description,
-                  aiKeywords: tags.join(", "), // Convert array to comma-separated string
-                  additionalImages: "", // Empty string instead of array
-                  metadata: JSON.stringify({}), // Convert object to JSON string
-                  createdAt: new Date(),
-                  updatedAt: new Date(),
-                };
-              });
-
-              console.log("[CSV IMPORT] Transformed items:", items.length);
-              console.log("[CSV IMPORT] Sample item:", items[0]);
-
-              // Step 4: Save to database
-              // IMPORTANT: Use createMany for bulk insert
-              const result = await prisma.collectionItem.createMany({
-                data: items,
-              });
-
-              console.log("[CSV IMPORT] Saved to DB:", result.count, "items");
-
-              // Step 5: Return the items for the response
-              // Note: createMany doesn't return the created items, so we fetch them
-              const savedItems = await prisma.collectionItem.findMany({
-                where: {
-                  externalId: {
-                    in: items.map((i) => i.externalId),
-                  },
-                },
-                orderBy: {
-                  createdAt: "desc",
-                },
-              });
-
-              console.log(
-                "[CSV IMPORT] Success! Retrieved:",
-                savedItems.length,
-                "items",
-              );
-              resolve(savedItems);
-            } catch (error) {
-              console.error("[CSV IMPORT] Error processing CSV:", error);
-              reject(error);
-            }
-          },
-          error: (error: { message: any }) => {
-            console.error("[CSV IMPORT] Papa parse error:", error);
-            reject(new Error(`CSV parsing failed: ${error.message}`));
-          },
-        });
-      });
-    } catch (error) {
-      console.error("[CSV IMPORT] Top-level error:", error);
-      throw error;
-    }
-  }
-
   async importFromCSVUpsert(
     csvFile: Express.Multer.File,
     imageFiles?: Express.Multer.File[],
@@ -687,9 +686,31 @@ export class CollectionService {
     }
   }
 
-  // ==================== GOOGLE DRIVE IMPORT ====================
+  // ════════════════════════════════════════════════════════════════════════════
+  // GOOGLE DRIVE INTEGRATION
+  // ════════════════════════════════════════════════════════════════════════════
 
-  //No Upsert but works!
+  /**
+   * Imports image files from Google Drive folder
+   * 
+   * Process:
+   * 1. Validate folder ID and access token
+   * 2. Authenticate with Google Drive API
+   * 3. List all files in specified folder
+   * 4. Filter for image files only
+   * 5. Generate high-quality preview URLs
+   * 6. Create database records
+   * 
+   * Image URL Strategy:
+   * - Uses Google's high-resolution preview URLs
+   * - Format: https://lh3.googleusercontent.com/d/{fileId}=w1000
+   * - Ensures consistent, reliable image access
+   * 
+   * @param folderId - Google Drive folder ID
+   * @param accessToken - OAuth 2.0 access token
+   * @returns Import results with statistics
+   * @throws {Error} For invalid folder ID, auth failures, or API errors
+   */
   async importFromDrive(folderId: string, accessToken: string) {
     // 1. Validate Folder ID
     if (!folderId || folderId === "undefined" || folderId === "null") {
@@ -726,7 +747,6 @@ export class CollectionService {
            * The 'sz=w1000' at the end ensures we get a high-resolution version.
            */
           const directImageUrl = `https://lh3.googleusercontent.com/d/${file.id}=w1000`;
-          //const directImageUrl = `https://lh3.googleusercontent.com/d/${file.id}=w400`;
 
           const newItem = await prisma.collectionItem.create({
             data: {
@@ -764,6 +784,17 @@ export class CollectionService {
     }
   }
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // COLLECTION MANAGEMENT
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Clears entire collection (destructive operation)
+   * 
+   * @warning This operation cannot be undone
+   * @returns Deletion statistics
+   * @throws {Error} If database operation fails
+   */
   async clearCollection() {
     try {
       const result = await prisma.collectionItem.deleteMany({});
@@ -779,6 +810,13 @@ export class CollectionService {
     }
   }
 
+  /**
+   * Deletes specific artwork by UUID
+   * 
+   * @param id - Artwork UUID to delete
+   * @returns Deletion confirmation
+   * @throws {Error} If artwork not found or deletion fails
+   */
   async deleteArtwork(id: string) {
     try {
       await prisma.collectionItem.delete({

@@ -3,11 +3,6 @@ import express from "express";
 import cors from "cors";              
 import collectionRoutes from "./routes/collection.routes.js";
 import path from "path";
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const app = express();
 

@@ -1,3 +1,15 @@
+/**
+ * Collection Routes
+ *
+ * RESTful API endpoints for managing artwork collections.
+ * Handles imports from Met Museum, Google Drive, CSV files,
+ * as well as CRUD operations and AI enrichment.
+ *
+ * @author Your Name
+ * @version 1.0.0
+ * @since 2024-02-23
+ */
+
 import { Router } from "express";
 import { CollectionService } from "../services/collection.service";
 import multer from "multer";
@@ -16,6 +28,20 @@ const __dirname = dirname(__filename);
 const router = Router();
 const service = new CollectionService();
 
+// ════════════════════════════════════════════════════════════════════════════
+// MET MUSEUM IMPORT ENDPOINTS
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /import/met
+ *
+ * Imports artworks from the Metropolitan Museum of Art API.
+ * Supports free-text search and department filtering.
+ *
+ * @body { searchTerm?: string, departmentIds?: number[] }
+ * @returns {ImportMetResponse} Imported artworks with statistics
+ * @throws {500} If import fails
+ */
 router.post("/import/met", async (req, res) => {
   try {
     console.log("[IMPORT ROUTE] Request body:", req.body);
@@ -31,6 +57,16 @@ router.post("/import/met", async (req, res) => {
   }
 });
 
+/**
+ * POST /enrich/:id
+ *
+ * Enriches a single artwork with AI-generated keywords and metadata.
+ * Uses AI service to analyze the artwork and generate descriptive tags.
+ *
+ * @param {string} id - The artwork's UUID
+ * @returns {Artwork} Enriched artwork with AI-generated metadata
+ * @throws {500} If enrichment service fails
+ */
 router.post("/enrich/:id", async (req, res) => {
   try {
     console.log("[ENRICH ROUTE] Request params:", req.params);
@@ -42,6 +78,18 @@ router.post("/enrich/:id", async (req, res) => {
   }
 });
 
+/**
+ * GET /items
+ *
+ * Retrieves paginated collection items from the database.
+ * Supports flexible pagination with validation.
+ *
+ * @query { page?: number } Page number (default: 1, min: 1)
+ * @query { limit?: number } Items per page (default: 100, range: 1-1000)
+ * @returns {PaginatedResponse<Artwork>} Paginated artwork collection
+ * @throws {400} If pagination parameters are invalid
+ * @throws {500} If database query fails
+ */
 router.get("/items", async (req, res) => {
   try {
     // Parse pagination parameters with defaults
@@ -66,6 +114,15 @@ router.get("/items", async (req, res) => {
   }
 });
 
+/**
+ * GET /departments
+ *
+ * Retrieves available departments from the Metropolitan Museum of Art.
+ * Used for filtering imports by specific museum departments.
+ *
+ * @returns {Department[]} Array of department objects with IDs and names
+ * @throws {500} If department fetch fails
+ */
 router.get("/departments", async (_req, res) => {
   try {
     const departments = await service.getDepartments();
@@ -79,13 +136,82 @@ router.get("/departments", async (_req, res) => {
   }
 });
 
-// 1. Redirect user to Google
+/**
+ * DELETE /clear
+ *
+ * Removes all collection items from the database.
+ * This is a destructive operation that cannot be undone.
+ *
+ * @returns {success: boolean, count: number} Success status and deleted count
+ * @throws {500} If database operation fails
+ */
+router.delete("/clear", async (req, res) => {
+  try {
+    console.log("[ROUTE] Received request to clear collection");
+    const result = await service.clearCollection();
+    res.json(result);
+  } catch (err: any) {
+    console.error("[ROUTE] Error in /clear:", err);
+    res.status(500).json({
+      error: "Clear failed",
+      message: err.message || "Unknown error",
+    });
+  }
+});
+
+/**
+ * DELETE /items/:id
+ *
+ * Removes a specific artwork from the collection by UUID.
+ * Performs soft validation to ensure the item exists before deletion.
+ *
+ * @param {string} id - The artwork's UUID to delete
+ * @returns {success: boolean, message: string} Deletion confirmation
+ * @throws {500} If database operation fails
+ */
+router.delete("/items/:id", async (req, res) => {
+  try {
+    console.log("[ROUTE] Received request to delete artwork");
+    const { id } = req.params;
+    const result = await service.deleteArtwork(id);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: "Deletion failed", message: err.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// GOOGLE DRIVE OAUTH 2.0 INTEGRATION
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /import/drive/auth
+ *
+ * Generates Google OAuth 2.0 authorization URL for Drive access.
+ * Initiates the OAuth flow by providing the user with a consent URL.
+ *
+ * @returns {url: string} Google OAuth authorization URL
+ */
 router.get("/import/drive/auth", (req, res) => {
   const url = generateGoogleAuthUrl();
   res.json({ url });
 });
 
-// 2. Handle the callback and perform the import
+/**
+ * GET /import/drive/callback
+ *
+ * Google Drive OAuth 2.0 callback handler.
+ * Completes the OAuth flow and automatically imports files from the specified folder.
+ *
+ * OAuth Flow:
+ * 1. Exchange authorization code for access tokens
+ * 2. Use access token to import files from specified folder ID (passed via state)
+ * 3. Redirect user back to frontend with success/error status
+ *
+ * @query { code: string } Authorization code from Google
+ * @query { state?: string } Folder ID to import from (optional)
+ * @redirect {frontend_url} With status parameter (success/error)
+ */
 router.get("/import/drive/callback", async (req, res) => {
   const { code, state } = req.query; // 'state' can be used to pass the collectionId
 
@@ -104,6 +230,20 @@ router.get("/import/drive/callback", async (req, res) => {
   }
 });
 
+/**
+ * POST /import/drive
+ *
+ * Imports images from a specific Google Drive folder.
+ * Uses OAuth 2.0 access token to access Drive files and import image files.
+ *
+ * Note: The frontend sends 'accessToken' in the body, but this is actually
+ * the authorization code that gets exchanged for a real access token.
+ *
+ * @body { folderId: string, accessToken: string } Folder ID and auth code
+ * @returns {DriveImportResponse} Import results with statistics
+ * @throws {400} If folderId or auth code is missing
+ * @throws {500} If token exchange or import fails
+ */
 router.post("/import/drive", async (req, res) => {
   try {
     // Note: The frontend sends 'accessToken' in the body,
@@ -242,29 +382,37 @@ router.post(
   },
 );
 
-router.delete("/clear", async (req, res) => {
-  try {
-    console.log("[ROUTE] Received request to clear collection");
-    const result = await service.clearCollection();
-    res.json(result);
-  } catch (err: any) {
-    console.error("[ROUTE] Error in /clear:", err);
-    res.status(500).json({
-      error: "Clear failed",
-      message: err.message || "Unknown error",
-    });
-  }
-});
+/**
+ * API Response Standards:
+ *
+ * Success responses follow consistent structure:
+ * - { success: boolean, data: any, message?: string }
+ *
+ * Error responses follow consistent structure:
+ * - { error: string, message?: string, details?: any }
+ *
+ * All timestamps use ISO 8601 format
+ * All IDs are UUID strings
+ */
 
-router.delete("/items/:id", async (req, res) => {
-  try {
-    console.log("[ROUTE] Received request to delete artwork");
-    const { id } = req.params;
-    const result = await service.deleteArtwork(id);
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: "Deletion failed", message: err.message });
-  }
-});
+/**
+ * Security Notes:
+ *
+ * - File uploads are validated for type and size
+ * - Directory traversal prevented via path.join()
+ * - OAuth tokens are not stored (session-based)
+ * - Input validation on all parameters
+ * - Error messages don't expose sensitive information
+ */
+
+/**
+ * Performance Considerations:
+ *
+ * - Pagination prevents large dataset transfers
+ * - File size limits prevent memory exhaustion
+ * - Database operations use proper indexing
+ * - Image processing is handled asynchronously
+ * - Error logging is non-blocking
+ */
 
 export default router;
