@@ -54,6 +54,7 @@ prisma/migrations/
 
 tema-collections-demo/dist/
 tema-collections-demo/coverage/
+tema-collections-demo/uploads
 
 # ────────────────────────────────────────────────────────────────
 # Frontend-specific (tema-frontend)
