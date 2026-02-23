@@ -662,68 +662,229 @@ export async function deleteArtwork(id: string): Promise<void> {
 
 ## 🏎️ Performance Optimizations
 
-### **1. Caching Strategy**
+### **1. Dual-Layer Caching Strategy**
+
+The system implements two distinct caching layers for optimal performance:
+
+#### **Met Museum Cache (metCache)**
 ```typescript
-// Multi-layer caching system
-const metCache = new NodeCache({ stdTTL: 3600, checkperiod: 300 });  // 1 hour
-const aiCache = new NodeCache({ stdTTL: 86400, checkperiod: 600 }); // 24 hours
-
-// Cache hit logging
-const cached = metCache.get(cacheKey);
-if (cached) {
-  console.log("[CACHE] Hit for key:", cacheKey);
-  return cached;
-}
-
-// Cache miss and set
-const data = await fetchData();
-metCache.set(cacheKey, data);
-console.log("[CACHE] Set for key:", cacheKey);
-```
-
-### **2. Database Optimization**
-```typescript
-// Efficient queries with proper indexing
-const items = await prisma.collectionItem.findMany({
-  skip,
-  take: limit,
-  orderBy: { createdAt: "desc" }, // Uses created_at index
-  select: {  // Only select needed fields
-    id: true,
-    title: true,
-    artist: true,
-    imageUrl: true,
-    createdAt: true
-  }
-});
-
-// Bulk operations for performance
-await prisma.collectionItem.createMany({ data: items });
-await prisma.collectionItem.updateMany({
-  where: { id: { in: ids } },
-  data: { updatedAt: new Date() }
+const metCache = new NodeCache({ 
+  stdTTL: 3600,    // 1 hour for Met objects
+  checkperiod: 300   // Check expired keys every 5 minutes
 });
 ```
 
-### **3. API Rate Limiting**
-```typescript
-// Timeout configurations
-const MET_TIMEOUT = 15000;  // 15 seconds
-const OPENAI_TIMEOUT = 30000; // 30 seconds
+**Usage Scenarios:**
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Object ID    │───→│   Cache Check   │───→│   Met API      │
+│ (stable key)   │    │ (1hr TTL)      │    │ (rate limited) │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         ↑                       ↓                       ↓
+         │                  Cache Hit?            API Call
+         │                       │                   │
+         └───────────────Yes─────┘                   │
+                                                │
+                         Cache Miss?              │
+                                │               │
+                                ↓               │
+                           Call Met API─────────────┘
+                                │
+                                ↓
+                           Cache Result
+```
 
-// Retry logic with exponential backoff
-const retryWithBackoff = async (fn, retries = 3) => {
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await fn();
-    } catch (error) {
-      if (i === retries - 1) throw error;
-      const delay = Math.pow(2, i) * 1000; // 1s, 2s, 4s
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
+**Real-World Scenarios:**
+
+1. **Multiple Users Importing Same Artwork**
+   ```
+   User A imports "Starry Night" (ID: 436532)
+   → Met API called, data cached for 1 hour
+   → User B imports same artwork within hour
+   → Cache hit! No API call, instant response
+   ```
+
+2. **Department Filtering with Overlap**
+   ```
+   User imports from Department 1 (Paintings)
+   → Objects 1001-1100 cached
+   
+   User imports from Department 2 (Drawings)
+   → Objects 1050-1150 requested
+   → Objects 1050-1100 served from cache
+   → Only 1100-1150 require API calls
+   ```
+
+3. **Search and Refine Workflow**
+   ```
+   User searches "Van Gogh" → 50 results
+   → All 50 objects cached
+   
+   User refines to "Van Gogh landscape" → 20 results
+   → All 20 served from cache (subset of previous)
+   → Zero additional API calls
+   ```
+
+#### **AI Cache (aiCache)**
+```typescript
+const aiCache = new NodeCache({ 
+  stdTTL: 86400,   // 24 hours for AI results
+  checkperiod: 600   // Check expired keys every 10 minutes
+});
+```
+
+**Usage Scenarios:**
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Image URL    │───→│   Cache Check   │───→│   OpenAI API   │
+│ (MD5 hash)    │    │ (24hr TTL)      │    │ (costly)      │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         ↑                       ↓                       ↓
+         │                  Cache Hit?            API Call
+         │                       │                   │
+         └───────────────Yes─────┘                   │
+                                                │
+                         Cache Miss?              │
+                                │               │
+                                ↓               │
+                           Call OpenAI─────────────┘
+                                │
+                                ↓
+                           Cache & Update DB
+```
+
+**Real-World Scenarios:**
+
+1. **Multiple Enrichment Requests**
+   ```
+   Time 1: User enriches "Mona Lisa" image
+   → OpenAI called, keywords generated, cached 24h
+   → DB updated with AI keywords
+   
+   Time 2 (within 24h): Another item with same image URL
+   → Cache hit! No OpenAI call
+   → DB updated instantly with cached keywords
+   ```
+
+2. **Data Recovery Scenarios**
+   ```
+   Developer accidentally clears AI keywords from DB
+   → Re-enrichment request
+   → Cache hit! Keywords restored without API cost
+   
+   Production database rollback
+   → Re-enrichment requests hit cache
+   → Keywords restored without OpenAI calls
+   ```
+
+3. **Development & Testing**
+   ```
+   Developer resets database frequently during testing
+   → Enrichment requests hit cache consistently
+   → Zero OpenAI costs during development
+   → Fast iteration cycles
+   ```
+
+### **2. Cache Performance Metrics**
+
+#### **Hit Rate Tracking**
+```typescript
+const cacheStats = {
+  met: { hits: 0, misses: 0 },
+  ai: { hits: 0, misses: 0 },
+  
+  recordMetHit: () => cacheStats.met.hits++,
+  recordMetMiss: () => cacheStats.met.misses++,
+  recordAiHit: () => cacheStats.ai.hits++,
+  recordAiMiss: () => cacheStats.ai.misses++,
+  
+  getMetHitRate: () => {
+    const total = cacheStats.met.hits + cacheStats.met.misses;
+    return total > 0 ? (cacheStats.met.hits / total * 100).toFixed(2) : 0;
+  },
+  
+  getAiHitRate: () => {
+    const total = cacheStats.ai.hits + cacheStats.ai.misses;
+    return total > 0 ? (cacheStats.ai.hits / total * 100).toFixed(2) : 0;
   }
 };
 ```
+
+#### **Cost Optimization Analysis**
+```
+Without Caching:
+- 100 Met objects × 10 requests = 1,000 API calls
+- 100 AI enrichments × $0.01 = $1.00 per batch
+
+With 80% Cache Hit Rate:
+- 100 Met objects × 2 requests = 200 API calls (80% reduction)
+- 100 AI enrichments × 20 = $0.20 per batch (80% savings)
+
+Monthly Savings (1000 imports):
+- Met API: 8,000 fewer calls
+- AI costs: $800 savings
+- Response time: 5x faster for cached items
+```
+
+### **3. Cache Invalidation Strategies**
+
+#### **Time-Based Expiration**
+```typescript
+// Met objects: 1 hour (fresh data from museum)
+// AI results: 24 hours (visual analysis doesn't change)
+```
+
+#### **Manual Cache Clearing**
+```typescript
+// Development utilities
+const clearMetCache = () => metCache.flushAll();
+const clearAiCache = () => aiCache.flushAll();
+const clearAllCaches = () => {
+  metCache.flushAll();
+  aiCache.flushAll();
+};
+```
+
+#### **Selective Cache Invalidation**
+```typescript
+// Clear specific items when needed
+const invalidateMetObject = (objectId: string) => {
+  metCache.del(`met-object-${objectId}`);
+};
+
+const invalidateAiResult = (imageUrl: string) => {
+  const imageHash = crypto.createHash("md5").update(imageUrl).digest("hex");
+  aiCache.del(`ai-${imageHash}`);
+};
+```
+
+### **4. Database vs Cache Relationship**
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │         Data Flow Architecture        │
+                    └─────────────────────────────────────────┘
+    
+    ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+    │   Cache        │    │   Business     │    │   Database     │
+    │ (Fast, Temp)  │    │   Logic        │    │ (Persistent)   │
+    └─────────────────┘    └──────────────────┘    └─────────────────┘
+            ↑                       ↑                       ↑
+            │                       │                       │
+    Cache serves first        │               Database stores final
+    for performance          │               results permanently
+                            │
+            └───────────────────┴───────────────────┘
+                            │
+                    Cache updates DB with results
+```
+
+**Key Benefits:**
+- **Performance**: Instant cache hits vs API latency
+- **Cost Reduction**: Fewer external API calls
+- **Reliability**: Cache survives database issues
+- **Scalability**: Handles high concurrent load
+- **Development Speed**: Faster iteration during coding
 
 ---
 
