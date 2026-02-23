@@ -142,7 +142,7 @@ async enrichWithAI(itemId: string) {
         },
         {
           type: "image_url",
-          image_url: { url: item.imageUrl }
+          image_url: { url: item.imageUrl }  // ← Sends actual image!
         }
       ]
     }],
