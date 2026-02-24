@@ -1,17 +1,17 @@
 /**
  * Collection Service
- * 
+ *
  * Core business logic for managing artwork collections.
  * Handles imports from Met Museum, Google Drive, CSV files,
  * AI enrichment, and database operations.
- * 
+ *
  * Features:
  * - Multi-source import (Met API, Google Drive, CSV)
  * - AI-powered artwork enrichment using OpenAI Vision
  * - Intelligent caching for performance optimization
  * - Bulk operations with proper error handling
  * - Image processing and URL management
- * 
+ *
  * @author Your Name
  * @version 1.0.0
  * @since 2024-02-23
@@ -27,7 +27,11 @@ import prisma from "../lib/prisma";
 import * as fs from "fs";
 import { getOAuth2Client } from "../lib/google-auth";
 import { google } from "googleapis";
+import path from "path";
+import { fileURLToPath } from "url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 // ════════════════════════════════════════════════════════════════════════════
 // CACHE CONFIGURATION
 // ════════════════════════════════════════════════════════════════════════════
@@ -76,14 +80,14 @@ export class CollectionService {
 
   /**
    * Imports artworks from the Metropolitan Museum of Art API
-   * 
+   *
    * Features:
    * - Parallel API calls for performance
    * - Intelligent filtering (public domain, images only)
    * - Caching to reduce API load
    * - Bulk database operations
    * - Comprehensive error handling
-   * 
+   *
    * @param searchTerm - Free text search query (default: "*")
    * @param departmentIds - Array of department IDs for filtering
    * @returns Import results with statistics and items
@@ -246,7 +250,7 @@ export class CollectionService {
 
   /**
    * Enriches artwork metadata using AI-powered visual analysis
-   * 
+   *
    * Process:
    * 1. Generate MD5 hash of image URL for cache key
    * 2. Check cache for existing keywords
@@ -254,7 +258,7 @@ export class CollectionService {
    * 4. If not cached, analyze with OpenAI GPT-4 Vision
    * 5. Extract 8-12 specific, descriptive keywords
    * 6. Cache results for 24 hours
-   * 
+   *
    * @param itemId - UUID of the artwork to enrich
    * @returns Updated artwork with AI-generated keywords
    * @throws {Error} If artwork not found or AI service fails
@@ -264,7 +268,6 @@ export class CollectionService {
 
     const item = await prisma.collectionItem.findUnique({
       where: { id: itemId },
-      //where: { id: 'accd6378-7883-4fc9-bfbb-d479c232924e' },
     });
     if (!item || !item.imageUrl) {
       console.log(`[ENRICH] Item ${itemId} not found or no image URL`);
@@ -352,13 +355,13 @@ export class CollectionService {
 
   /**
    * Retrieves paginated collection items with formatted data
-   * 
+   *
    * Features:
    * - Efficient pagination with metadata
    * - Data transformation for frontend compatibility
    * - Proper sorting by creation date
    * - Array parsing for stored CSV data
-   * 
+   *
    * @param page - Page number (default: 1)
    * @param limit - Items per page (default: 100)
    * @returns Paginated items with metadata
@@ -400,12 +403,12 @@ export class CollectionService {
 
   /**
    * Retrieves Met Museum departments with caching
-   * 
+   *
    * Caching strategy:
    * - Cache departments for 1 hour
    * - Reduces API calls for frequently accessed data
    * - Graceful fallback on API failures
-   * 
+   *
    * @returns Array of department objects
    */
   async getDepartments() {
@@ -441,7 +444,7 @@ export class CollectionService {
 
   /**
    * Advanced CSV import with upsert capability and image handling
-   * 
+   *
    * Features:
    * - Smart upsert (update existing, create new)
    * - Intelligent image URL resolution
@@ -449,17 +452,17 @@ export class CollectionService {
    * - Comprehensive data validation and cleaning
    * - Automatic file cleanup after processing
    * - Detailed logging and error handling
-   * 
+   *
    * Image URL Resolution:
    * 1. If URL starts with "http" → use as-is
    * 2. If filename → match with uploaded files
    * 3. If no match found → set to null
-   * 
+   *
    * @param csvFile - CSV file with artwork metadata
    * @param imageFiles - Optional uploaded image files
    * @returns Import results with statistics
    */
-  async importFromCSVUpsert(
+  async importFromCSV(
     csvFile: Express.Multer.File,
     imageFiles?: Express.Multer.File[],
   ): Promise<{ items: any[]; newCount: number; updatedCount: number }> {
@@ -690,97 +693,41 @@ export class CollectionService {
   // GOOGLE DRIVE INTEGRATION
   // ════════════════════════════════════════════════════════════════════════════
 
-  /**
-   * Imports image files from Google Drive folder
-   * 
-   * Process:
-   * 1. Validate folder ID and access token
-   * 2. Authenticate with Google Drive API
-   * 3. List all files in specified folder
-   * 4. Filter for image files only
-   * 5. Generate high-quality preview URLs
-   * 6. Create database records
-   * 
-   * Image URL Strategy:
-   * - Uses Google's high-resolution preview URLs
-   * - Format: https://lh3.googleusercontent.com/d/{fileId}=w1000
-   * - Ensures consistent, reliable image access
-   * 
-   * @param folderId - Google Drive folder ID
-   * @param accessToken - OAuth 2.0 access token
-   * @returns Import results with statistics
-   * @throws {Error} For invalid folder ID, auth failures, or API errors
-   */
-  async importFromDrive(folderId: string, accessToken: string) {
-    // 1. Validate Folder ID
-    if (!folderId || folderId === "undefined" || folderId === "null") {
-      throw new Error("Invalid Folder ID received by backend.");
-    }
-
-    console.log(">>> [DRIVE SERVICE] Initializing with Folder ID:", folderId);
-
-    // 2. Setup Google Auth Client
-    const auth = getOAuth2Client();
-    auth.setCredentials({ access_token: accessToken });
-
-    const drive = google.drive({ version: "v3", auth });
-
+  async downloadDriveImageToLocal(
+    drive: any,
+    fileId: string,
+    filename: string,
+  ): Promise<string> {
     try {
-      // 3. List all files inside the specified folder
-      const response = await drive.files.list({
-        q: `'${folderId}' in parents and trashed = false`,
-        fields: "files(id, name, mimeType, webContentLink, thumbnailLink)",
-      });
+      const uploadDir = path.join(__dirname, "../../uploads/artworks");
 
-      const files = response.data.files || [];
-      console.log(
-        `>>> [DRIVE SERVICE] Found ${files.length} files in Google Drive.`,
+      // Ensure directory exists
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+
+      const filePath = path.join(uploadDir, filename);
+      const dest = fs.createWriteStream(filePath);
+
+      // Download raw binary from Google Drive API
+      const response = await drive.files.get(
+        { fileId, alt: "media" },
+        { responseType: "stream" },
       );
 
-      const results = [];
-      for (const file of files) {
-        // Only process image files (jpg, png, etc.)
-        if (file.mimeType?.startsWith("image/")) {
-          /**
-           * FIXING THE IMAGE URL:
-           * We change the download link to a high-quality thumbnail preview link.
-           * The 'sz=w1000' at the end ensures we get a high-resolution version.
-           */
-          const directImageUrl = `https://lh3.googleusercontent.com/d/${file.id}=w1000`;
+      await new Promise<void>((resolve, reject) => {
+        response.data.on("end", resolve).on("error", reject).pipe(dest);
+      });
 
-          const newItem = await prisma.collectionItem.create({
-            data: {
-              title: file.name || "Untitled",
-              imageUrl: directImageUrl, // The fixed preview URL
-              externalId: file.id!,
-              // Note: 'source' is removed to prevent Prisma 'known properties' error
-            },
-          });
-          results.push(newItem);
-        }
-      }
-
-      return {
-        success: true,
-        items: results,
-        stats: { new: results.length, updated: 0 },
-      };
-    } catch (error: any) {
-      console.error(">>> [DRIVE SERVICE] API ERROR:", error.message);
-
-      if (error.code === 404) {
-        throw new Error(
-          `Folder ID '${folderId}' was not found. Please ensure the folder is shared.`,
-        );
-      }
-
-      if (error.code === 401 || error.code === 403) {
-        throw new Error(
-          "Google Authentication expired or invalid permissions. Please reconnect.",
-        );
-      }
-
-      throw error;
+      const publicUrl = `/uploads/artworks/${filename}`;
+      return publicUrl;
+    } catch (err) {
+      console.error(
+        "[DRIVE-DOWNLOAD ERROR] Failed to download Drive image:",
+        fileId,
+        err,
+      );
+      return "";
     }
   }
 
@@ -789,8 +736,119 @@ export class CollectionService {
   // ════════════════════════════════════════════════════════════════════════════
 
   /**
+   * Imports image files from Google Drive folder
+   *
+   * Process:
+   * 1. Validate folder ID and access token
+   * 2. Authenticate with Google Drive API
+   * 3. List all files in specified folder
+   * 4. Filter for image files only
+   * 5. Generate high-quality preview URLs
+   * 6. Create database records
+   *
+   * Image URL Strategy:
+   * - Uses Google's high-resolution preview URLs
+   * - Format: https://lh3.googleusercontent.com/d/{fileId}=w1000
+   * - Ensures consistent, reliable image access
+   *
+   * @param folderId - Google Drive folder ID
+   * @param accessToken - OAuth 2.0 access token
+   * @returns Import results with statistics
+   * @throws {Error} For invalid folder ID, auth failures, or API errors
+   */
+  async importFromDrive(folderId: string, accessToken: string) {
+    if (!folderId || folderId === "undefined" || folderId === "null") {
+      throw new Error("Invalid Folder ID received by backend.");
+    }
+
+    console.log(">>> [DRIVE SERVICE] Initializing with Folder ID:", folderId);
+
+    const auth = getOAuth2Client();
+    auth.setCredentials({ access_token: accessToken });
+
+    const drive = google.drive({ version: "v3", auth });
+
+    try {
+      const response = await drive.files.list({
+        q: `'${folderId}' in parents AND trashed = false`,
+        fields: "files(id, name, mimeType)",
+      });
+
+      const files = response.data.files || [];
+      console.log(
+        `>>> [DRIVE SERVICE] Found ${files.length} files in Google Drive.`,
+      );
+
+      const results = [];
+      let newCount = 0;
+      let updatedCount = 0;
+
+      for (const file of files) {
+        if (!file.mimeType?.startsWith("image/")) continue;
+
+        // Use Drive API to get image bytes
+        const safeFilename = file.name
+          ? file.name.replace(/\s+/g, "_")
+          : `${file.id}.jpg`;
+
+        const localImageUrl = await this.downloadDriveImageToLocal(
+          drive,
+          file.id!,
+          safeFilename,
+        );
+
+        if (!localImageUrl) {
+          console.warn(`[DRIVE IMPORT] Failed to download: ${file.name}`);
+          continue;
+        }
+
+        // Save item using the LOCAL URL
+        const newItem = await prisma.collectionItem.upsert({
+          where: { externalId: file.id! },
+          update: {
+            title: file.name || "Untitled",
+            imageUrl: localImageUrl,
+            updatedAt: new Date(),
+          },
+          create: {
+            externalId: file.id!,
+            title: file.name || "Untitled",
+            imageUrl: localImageUrl,
+          },
+        });
+
+        if (newItem.createdAt.getTime() === newItem.updatedAt.getTime()) {
+          newCount++;
+        } else {
+          updatedCount++;
+        }
+
+        results.push(newItem);
+      }
+
+      return {
+        success: true,
+        items: results,
+        stats: { new: newCount, updated: updatedCount },
+      };
+    } catch (error: any) {
+      console.error(">>> [DRIVE SERVICE] API ERROR:", error.message);
+
+      if (error.code === 404) {
+        throw new Error(`Folder ID '${folderId}' was not found.`);
+      }
+
+      if (error.code === 401 || error.code === 403) {
+        throw new Error("Google Authentication expired. Please reconnect.");
+      }
+
+      throw error;
+    }
+  }
+
+  /**
    * Clears entire collection (destructive operation)
-   * 
+   *
    * @warning This operation cannot be undone
    * @returns Deletion statistics
    * @throws {Error} If database operation fails
@@ -812,7 +870,7 @@ export class CollectionService {
 
   /**
    * Deletes specific artwork by UUID
-   * 
+   *
    * @param id - Artwork UUID to delete
    * @returns Deletion confirmation
    * @throws {Error} If artwork not found or deletion fails

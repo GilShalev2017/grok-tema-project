@@ -319,7 +319,7 @@ router.post(
 
       // Pass both CSV and images to service
       // Service will automatically detect if images are needed
-      const result = await service.importFromCSVUpsert(csvFile, imageFiles);
+      const result = await service.importFromCSV(csvFile, imageFiles);
 
       console.log(
         "[CSV IMPORT ROUTE] Success! New:",
